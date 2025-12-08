@@ -8,6 +8,8 @@ import '../models/note.dart';
 
 import '../pages/topics_page.dart';
 
+import '../services/subject_services.dart';
+
 late Isar isar;
 
 
@@ -63,16 +65,6 @@ class StudyApp extends StatelessWidget {
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
   final String title;
 
   @override
@@ -169,16 +161,11 @@ class _NotesPageState extends State<NotesPage> {
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 if (subjectName.trim().isEmpty) return;
 
-                setState(() {
-                  subjects.add(Subject(
-                    id: DateTime.now().toString(),
-                    name: subjectName.trim(),
-                  ));
-                });
-                Navigator.of(context).pop();
+                await subjectService.addSubject(subjectName.trim());
+                if(mounted) Navigator.pop(context);
               },
               child: const Text('Add'),
             ),
@@ -197,6 +184,7 @@ class _NotesPageState extends State<NotesPage> {
     );
   }
   @override
+  
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton(

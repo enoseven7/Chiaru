@@ -1,37 +1,39 @@
 import 'package:flutter/material.dart';
 import '../models/subject.dart';
-import '../models/topic.dart';
-import '../pages/notes_list_page.dart';
-import '../services/topic_service.dart';
+import '../services/subject_services.dart';
+import 'topics_page.dart';
 
-class TopicsPage extends StatefulWidget {
-  final Subject subject;
-
-  const TopicsPage({super.key, required this.subject});
+class NotesPage extends StatefulWidget {
+  const NotesPage({super.key});
 
   @override
-  State<TopicsPage> createState() => _TopicsPageState();
+  State<NotesPage> createState() => _NotesPageState();
 }
 
-class _TopicsPageState extends State<TopicsPage> {
-  List<Topic> topics = [];
+class _NotesPageState extends State<NotesPage> {
+  List<Subject> subjects = [];
 
   @override
   void initState() {
     super.initState();
-    _loadTopics();
+    _loadSubjects();
   }
 
-  void _addTopic() {
+  Future<void> _loadSubjects() async {
+    subjects = await subjectService.getSubjects();
+    if (mounted) setState(() {});
+  }
+
+  void _addSubject() {
     showDialog(
       context: context,
       builder: (context) {
         String name = '';
 
         return AlertDialog(
-          title: const Text('New Topic'),
+          title: const Text('New Subject'),
           content: TextField(
-            decoration: const InputDecoration(hintText: 'Enter topic name'),
+            decoration: const InputDecoration(hintText: 'Enter subject name'),
             onChanged: (value) => name = value,
           ),
           actions: [
@@ -44,9 +46,11 @@ class _TopicsPageState extends State<TopicsPage> {
               onPressed: () async {
                 if (name.trim().isEmpty) return;
 
-                await topicService.addTopic(widget.subject.id, name.trim());
-                await _loadTopics();
-                if (mounted) Navigator.pop(context);
+                await subjectService.addSubject(name.trim());
+                await _loadSubjects();
+
+                if (!mounted) return;
+                Navigator.pop(context);
               },
             ),
           ],
@@ -55,14 +59,14 @@ class _TopicsPageState extends State<TopicsPage> {
     );
   }
 
-  void _openTopic(Topic topic) {
+  void _openSubject(Subject subject) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => NotesListPage(topic: topic)),
-    );
+      MaterialPageRoute(builder: (_) => TopicsPage(subject: subject)),
+    ).then((_) => _loadSubjects());
   }
 
-  void _showTopicMenu(Topic topic) {
+  void _showSubjectMenu(Subject subject) {
     showModalBottomSheet(
       context: context,
       builder: (_) {
@@ -75,7 +79,7 @@ class _TopicsPageState extends State<TopicsPage> {
                 title: const Text("Rename"),
                 onTap: () {
                   Navigator.pop(context);
-                  _renameTopic(topic);
+                  _renameSubject(subject);
                 },
               ),
               ListTile(
@@ -86,8 +90,8 @@ class _TopicsPageState extends State<TopicsPage> {
                 ),
                 onTap: () async {
                   Navigator.pop(context);
-                  await topicService.deleteTopic(topic.id);
-                  await _loadTopics();
+                  await subjectService.deleteSubject(subject.id);
+                  await _loadSubjects();
                 },
               ),
             ],
@@ -97,17 +101,17 @@ class _TopicsPageState extends State<TopicsPage> {
     );
   }
 
-  void _renameTopic(Topic topic) {
-    String name = topic.name;
+  void _renameSubject(Subject subject) {
+    String name = subject.name;
 
     showDialog(
       context: context,
       builder: (_) {
         return AlertDialog(
-          title: const Text("Rename Topic"),
+          title: const Text("Rename Subject"),
           content: TextField(
             controller: TextEditingController(text: name),
-            onChanged: (value) => name = value,
+            onChanged: (val) => name = val,
           ),
           actions: [
             TextButton(
@@ -118,11 +122,13 @@ class _TopicsPageState extends State<TopicsPage> {
               onPressed: () async {
                 if (name.trim().isEmpty) return;
 
-                topic.name = name.trim();
+                subject.name = name.trim();
 
-                await topicService.updateTopic(topic);
-                await _loadTopics();
-                if (mounted) Navigator.pop(context);
+                await subjectService.updateSubject(subject);
+                await _loadSubjects();
+                if (mounted) {
+                  Navigator.pop(context);
+                }
               },
               child: const Text("Save"),
             ),
@@ -132,28 +138,22 @@ class _TopicsPageState extends State<TopicsPage> {
     );
   }
 
-  Future<void> _loadTopics() async {
-    topics = await topicService.getTopicsForSubject(widget.subject.id);
-    if (mounted) setState(() {});
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.subject.name)),
       floatingActionButton: FloatingActionButton(
-        onPressed: _addTopic,
+        onPressed: _addSubject,
         child: const Icon(Icons.add),
       ),
-      body: topics.isEmpty
-          ? const Center(child: Text("No topics yet. Add one!"))
+      body: subjects.isEmpty
+          ? const Center(child: Text("No subjects yet. Add one!"))
           : ListView.builder(
-              itemCount: topics.length,
+              itemCount: subjects.length,
               itemBuilder: (context, index) {
-                final topic = topics[index];
+                final subject = subjects[index];
 
                 return Dismissible(
-                  key: ValueKey(topic.id),
+                  key: ValueKey(subject.id),
                   direction: DismissDirection.endToStart,
                   background: Container(
                     alignment: Alignment.centerRight,
@@ -165,9 +165,9 @@ class _TopicsPageState extends State<TopicsPage> {
                     return await showDialog(
                       context: context,
                       builder: (_) => AlertDialog(
-                        title: const Text("Delete Topic?"),
+                        title: const Text("Delete Subject?"),
                         content: const Text(
-                          "All notes inside this topic will also be deleted.",
+                          "All topics and notes inside it will be removed.",
                         ),
                         actions: [
                           TextButton(
@@ -186,14 +186,14 @@ class _TopicsPageState extends State<TopicsPage> {
                     );
                   },
                   onDismissed: (_) async {
-                    await topicService.deleteTopic(topic.id);
-                    await _loadTopics();
+                    await subjectService.deleteSubject(subject.id);
+                    await _loadSubjects();
                   },
                   child: ListTile(
-                    title: Text(topic.name),
+                    title: Text(subject.name),
                     trailing: const Icon(Icons.arrow_forward_ios),
-                    onTap: () => _openTopic(topic),
-                    onLongPress: () => _showTopicMenu(topic),
+                    onTap: () => _openSubject(subject),
+                    onLongPress: () => _showSubjectMenu(subject),
                   ),
                 );
               },

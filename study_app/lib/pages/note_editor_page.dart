@@ -3,7 +3,7 @@ import '../models/note.dart';
 
 class NoteEditorPage extends StatefulWidget {
   final Note note;
-  final void Function(Note) onSave;
+  final Future<void> Function(Note) onSave;
 
   const NoteEditorPage({super.key, required this.note, required this.onSave});
 
@@ -20,10 +20,18 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _controller = TextEditingController(text: widget.note.content);
   }
 
-  void _save() {
+  Future<void> _save() async {
     widget.note.content = _controller.text;
-    widget.onSave(widget.note);
-    Navigator.pop(context);
+    await widget.onSave(widget.note);
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override

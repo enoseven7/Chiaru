@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/topic.dart';
 import '../models/note.dart';
 import 'note_editor_page.dart';
+import '../services/note_service.dart';
 
 class NotesListPage extends StatefulWidget {
   final Topic topic;
@@ -15,20 +16,23 @@ class NotesListPage extends StatefulWidget {
 class _NotesListPageState extends State<NotesListPage> {
   List<Note> notes = [];
 
+  @override
+  void initState() {
+    super.initState();
+    _loadNotes();
+  }
+
   void _addNote() {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => NoteEditorPage(
-          note: Note(
-            id: DateTime.now().toString(),
-            topicId: widget.topic.id,
-            content: "",
-          ),
-          onSave: (newNote) {
-            setState(() {
-              notes.add(newNote);
-            });
+          note: Note()
+            ..topicId = widget.topic.id
+            ..content = "",
+          onSave: (newNote) async {
+            await noteService.addNote(newNote.topicId, newNote.content);
+            await _loadNotes();
           },
         ),
       ),
@@ -41,12 +45,18 @@ class _NotesListPageState extends State<NotesListPage> {
       MaterialPageRoute(
         builder: (_) => NoteEditorPage(
           note: note,
-          onSave: (updated) {
-            setState(() {});
+          onSave: (updated) async {
+            await noteService.updateNote(updated);
+            await _loadNotes();
           },
         ),
       ),
     );
+  }
+
+  Future<void> _loadNotes() async {
+    notes = await noteService.getNotesForTopic(widget.topic.id);
+    if (mounted) setState(() {});
   }
 
   @override
