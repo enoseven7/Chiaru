@@ -17,58 +17,68 @@ const FlashcardSchema = CollectionSchema(
   name: r'Flashcard',
   id: -5712857134961670327,
   properties: {
-    r'audioPath': PropertySchema(
+    r'audioOnFront': PropertySchema(
       id: 0,
+      name: r'audioOnFront',
+      type: IsarType.bool,
+    ),
+    r'audioPath': PropertySchema(
+      id: 1,
       name: r'audioPath',
       type: IsarType.string,
     ),
     r'back': PropertySchema(
-      id: 1,
+      id: 2,
       name: r'back',
       type: IsarType.string,
     ),
     r'deckId': PropertySchema(
-      id: 2,
+      id: 3,
       name: r'deckId',
       type: IsarType.long,
     ),
     r'dueAt': PropertySchema(
-      id: 3,
+      id: 4,
       name: r'dueAt',
       type: IsarType.long,
     ),
     r'easeFactor': PropertySchema(
-      id: 4,
+      id: 5,
       name: r'easeFactor',
       type: IsarType.double,
     ),
     r'front': PropertySchema(
-      id: 5,
+      id: 6,
       name: r'front',
       type: IsarType.string,
     ),
+    r'imageOnFront': PropertySchema(
+      id: 7,
+      name: r'imageOnFront',
+      type: IsarType.bool,
+    ),
     r'imagePath': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'imagePath',
       type: IsarType.string,
     ),
     r'intervalDays': PropertySchema(
-      id: 7,
+      id: 9,
       name: r'intervalDays',
       type: IsarType.long,
     ),
     r'lapses': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'lapses',
       type: IsarType.long,
     ),
     r'lastReviewed': PropertySchema(
-      id: 9,
+      id: 11,
       name: r'lastReviewed',
       type: IsarType.long,
     ),
     r'repetitions': PropertySchema(
-      id: 10,
+      id: 12,
       name: r'repetitions',
       type: IsarType.long,
     )
@@ -143,17 +153,19 @@ void _flashcardSerialize(
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
-  writer.writeString(offsets[0], object.audioPath);
-  writer.writeString(offsets[1], object.back);
-  writer.writeLong(offsets[2], object.deckId);
-  writer.writeLong(offsets[3], object.dueAt);
-  writer.writeDouble(offsets[4], object.easeFactor);
-  writer.writeString(offsets[5], object.front);
-  writer.writeString(offsets[6], object.imagePath);
-  writer.writeLong(offsets[7], object.intervalDays);
-  writer.writeLong(offsets[8], object.lapses);
-  writer.writeLong(offsets[9], object.lastReviewed);
-  writer.writeLong(offsets[10], object.repetitions);
+  writer.writeBool(offsets[0], object.audioOnFront);
+  writer.writeString(offsets[1], object.audioPath);
+  writer.writeString(offsets[2], object.back);
+  writer.writeLong(offsets[3], object.deckId);
+  writer.writeLong(offsets[4], object.dueAt);
+  writer.writeDouble(offsets[5], object.easeFactor);
+  writer.writeString(offsets[6], object.front);
+  writer.writeBool(offsets[7], object.imageOnFront);
+  writer.writeString(offsets[8], object.imagePath);
+  writer.writeLong(offsets[9], object.intervalDays);
+  writer.writeLong(offsets[10], object.lapses);
+  writer.writeLong(offsets[11], object.lastReviewed);
+  writer.writeLong(offsets[12], object.repetitions);
 }
 
 Flashcard _flashcardDeserialize(
@@ -163,18 +175,20 @@ Flashcard _flashcardDeserialize(
   Map<Type, List<int>> allOffsets,
 ) {
   final object = Flashcard();
-  object.audioPath = reader.readStringOrNull(offsets[0]);
-  object.back = reader.readString(offsets[1]);
-  object.deckId = reader.readLong(offsets[2]);
-  object.dueAt = reader.readLong(offsets[3]);
-  object.easeFactor = reader.readDouble(offsets[4]);
-  object.front = reader.readString(offsets[5]);
+  object.audioOnFront = reader.readBool(offsets[0]);
+  object.audioPath = reader.readStringOrNull(offsets[1]);
+  object.back = reader.readString(offsets[2]);
+  object.deckId = reader.readLong(offsets[3]);
+  object.dueAt = reader.readLong(offsets[4]);
+  object.easeFactor = reader.readDouble(offsets[5]);
+  object.front = reader.readString(offsets[6]);
   object.id = id;
-  object.imagePath = reader.readStringOrNull(offsets[6]);
-  object.intervalDays = reader.readLong(offsets[7]);
-  object.lapses = reader.readLong(offsets[8]);
-  object.lastReviewed = reader.readLong(offsets[9]);
-  object.repetitions = reader.readLong(offsets[10]);
+  object.imageOnFront = reader.readBool(offsets[7]);
+  object.imagePath = reader.readStringOrNull(offsets[8]);
+  object.intervalDays = reader.readLong(offsets[9]);
+  object.lapses = reader.readLong(offsets[10]);
+  object.lastReviewed = reader.readLong(offsets[11]);
+  object.repetitions = reader.readLong(offsets[12]);
   return object;
 }
 
@@ -186,26 +200,30 @@ P _flashcardDeserializeProp<P>(
 ) {
   switch (propertyId) {
     case 0:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 1:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 2:
-      return (reader.readLong(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 3:
       return (reader.readLong(offset)) as P;
     case 4:
-      return (reader.readDouble(offset)) as P;
+      return (reader.readLong(offset)) as P;
     case 5:
-      return (reader.readString(offset)) as P;
+      return (reader.readDouble(offset)) as P;
     case 6:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 7:
-      return (reader.readLong(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 8:
-      return (reader.readLong(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 9:
       return (reader.readLong(offset)) as P;
     case 10:
+      return (reader.readLong(offset)) as P;
+    case 11:
+      return (reader.readLong(offset)) as P;
+    case 12:
       return (reader.readLong(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -393,6 +411,16 @@ extension FlashcardQueryWhere
 
 extension FlashcardQueryFilter
     on QueryBuilder<Flashcard, Flashcard, QFilterCondition> {
+  QueryBuilder<Flashcard, Flashcard, QAfterFilterCondition> audioOnFrontEqualTo(
+      bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'audioOnFront',
+        value: value,
+      ));
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterFilterCondition> audioPathIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(const FilterCondition.isNull(
@@ -1024,6 +1052,16 @@ extension FlashcardQueryFilter
     });
   }
 
+  QueryBuilder<Flashcard, Flashcard, QAfterFilterCondition> imageOnFrontEqualTo(
+      bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'imageOnFront',
+        value: value,
+      ));
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterFilterCondition> imagePathIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(const FilterCondition.isNull(
@@ -1398,6 +1436,18 @@ extension FlashcardQueryLinks
     on QueryBuilder<Flashcard, Flashcard, QFilterCondition> {}
 
 extension FlashcardQuerySortBy on QueryBuilder<Flashcard, Flashcard, QSortBy> {
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByAudioOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'audioOnFront', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByAudioOnFrontDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'audioOnFront', Sort.desc);
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByAudioPath() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'audioPath', Sort.asc);
@@ -1470,6 +1520,18 @@ extension FlashcardQuerySortBy on QueryBuilder<Flashcard, Flashcard, QSortBy> {
     });
   }
 
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByImageOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'imageOnFront', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByImageOnFrontDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'imageOnFront', Sort.desc);
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterSortBy> sortByImagePath() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'imagePath', Sort.asc);
@@ -1533,6 +1595,18 @@ extension FlashcardQuerySortBy on QueryBuilder<Flashcard, Flashcard, QSortBy> {
 
 extension FlashcardQuerySortThenBy
     on QueryBuilder<Flashcard, Flashcard, QSortThenBy> {
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByAudioOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'audioOnFront', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByAudioOnFrontDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'audioOnFront', Sort.desc);
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByAudioPath() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'audioPath', Sort.asc);
@@ -1617,6 +1691,18 @@ extension FlashcardQuerySortThenBy
     });
   }
 
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByImageOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'imageOnFront', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByImageOnFrontDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'imageOnFront', Sort.desc);
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QAfterSortBy> thenByImagePath() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'imagePath', Sort.asc);
@@ -1680,6 +1766,12 @@ extension FlashcardQuerySortThenBy
 
 extension FlashcardQueryWhereDistinct
     on QueryBuilder<Flashcard, Flashcard, QDistinct> {
+  QueryBuilder<Flashcard, Flashcard, QDistinct> distinctByAudioOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'audioOnFront');
+    });
+  }
+
   QueryBuilder<Flashcard, Flashcard, QDistinct> distinctByAudioPath(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -1716,6 +1808,12 @@ extension FlashcardQueryWhereDistinct
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'front', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<Flashcard, Flashcard, QDistinct> distinctByImageOnFront() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'imageOnFront');
     });
   }
 
@@ -1759,6 +1857,12 @@ extension FlashcardQueryProperty
     });
   }
 
+  QueryBuilder<Flashcard, bool, QQueryOperations> audioOnFrontProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'audioOnFront');
+    });
+  }
+
   QueryBuilder<Flashcard, String?, QQueryOperations> audioPathProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'audioPath');
@@ -1792,6 +1896,12 @@ extension FlashcardQueryProperty
   QueryBuilder<Flashcard, String, QQueryOperations> frontProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'front');
+    });
+  }
+
+  QueryBuilder<Flashcard, bool, QQueryOperations> imageOnFrontProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'imageOnFront');
     });
   }
 

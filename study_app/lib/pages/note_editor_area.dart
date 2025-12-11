@@ -170,7 +170,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   String _previewParagraph(Note note) {
     final text = _notePreview(note);
     if (text.length <= 60) return text;
-    return text.substring(0, 60) + "...";
+    return "${text.substring(0, 60)}...";
   }
 
   Widget _buildNotesList() {
@@ -258,10 +258,10 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: colors.onSurface.withOpacity(0.08)),
       ),
       child: Column(
@@ -294,129 +294,132 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-
-          QuillSimpleToolbar(
-            controller: controller,
-            config: QuillSimpleToolbarConfig(
-              toolbarSectionSpacing: 6,
-              multiRowsDisplay: true,
-              showDividers: true,
-              showFontSize: true,
-              customButtons: [
-                QuillToolbarCustomButtonOptions(
-                  icon: const Icon(Icons.text_fields),
-                  tooltip: 'Custom size',
-                  onPressed: () async {
-                    final textCtrl = TextEditingController(text: '16');
-                    final size = await showDialog<double>(
-                      context: context,
-                      builder: (_) => AlertDialog(
-                        title: const Text('Custom font size (px)'),
-                        content: TextField(
-                          controller: textCtrl,
-                          keyboardType: TextInputType.number,
-                          autofocus: true,
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop<double>(
-                              context,
-                              double.tryParse(textCtrl.text),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: MediaQuery.of(context).size.width - 64,
+                  maxWidth: MediaQuery.of(context).size.width - 64,
+                ),
+                child: QuillSimpleToolbar(
+                  controller: controller,
+                  config: QuillSimpleToolbarConfig(
+                    multiRowsDisplay: false,
+                    toolbarSectionSpacing: 4,
+                    showDividers: false,
+                    showFontSize: true,
+                    customButtons: [
+                      QuillToolbarCustomButtonOptions(
+                        icon: const Icon(Icons.text_fields),
+                        tooltip: 'Custom size',
+                        onPressed: () async {
+                          final textCtrl = TextEditingController(text: '16');
+                          final size = await showDialog<double>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('Custom font size (px)'),
+                              content: TextField(
+                                controller: textCtrl,
+                                keyboardType: TextInputType.number,
+                                autofocus: true,
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop<double>(
+                                    context,
+                                    double.tryParse(textCtrl.text),
+                                  ),
+                                  child: const Text('Apply'),
+                                ),
+                              ],
                             ),
-                            child: const Text('Apply'),
+                          );
+                          if (size != null) {
+                            controller.formatSelection(
+                              Attribute.fromKeyValue(
+                                Attribute.size.key,
+                                size.toStringAsFixed(0),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                    buttonOptions: QuillSimpleToolbarButtonOptions(
+                      fontSize: const QuillToolbarFontSizeButtonOptions(
+                        items: {
+                          '12 px': '12',
+                          '14 px': '14',
+                          '16 px': '16',
+                          '18 px': '18',
+                          '24 px': '24',
+                          '32 px': '32',
+                        },
+                        defaultDisplayText: 'Size',
+                      ),
+                    ),
+                    iconTheme: QuillIconTheme(
+                      iconButtonUnselectedData: IconButtonData(
+                        color: colors.onSurfaceVariant,
+                        style: ButtonStyle(
+                          backgroundColor: WidgetStatePropertyAll(
+                            colors.surfaceContainerHighest,
                           ),
-                        ],
-                      ),
-                    );
-                    if (size != null) {
-                      controller.formatSelection(
-                        Attribute.fromKeyValue(
-                          Attribute.size.key,
-                          size.toStringAsFixed(0), // numeric string = px
+                          shape: WidgetStatePropertyAll(
+                            RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                          padding: const WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          ),
                         ),
-                      );
-                    }
-                  },
-                ),
-              ],
-              buttonOptions: QuillSimpleToolbarButtonOptions(
-                fontSize: const QuillToolbarFontSizeButtonOptions(
-                  // Keys are shown in the dropdown; values are applied to the document.
-                  items: {
-                    '12 px': '12',
-                    '14 px': '14',
-                    '16 px': '16',
-                    '18 px': '18',
-                    '24 px': '24',
-                    '32 px': '32',
-                    '48 px': '48',
-                    '64 px': '64',
-                    '96 px': '96',
-                    '128 px': '128',
-                    
-                  },
-                  defaultDisplayText: 'Size',
-                ),
-              ),
-              iconTheme: QuillIconTheme(
-                iconButtonUnselectedData: IconButtonData(
-                  color: colors.onSurfaceVariant,
-                  style: ButtonStyle(
-                    backgroundColor: MaterialStatePropertyAll(
-                      colors.surfaceVariant,
-                    ),
-                    shape: MaterialStatePropertyAll(
-                      RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
                       ),
-                    ),
-                    padding: const MaterialStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                  ),
-                ),
-                iconButtonSelectedData: IconButtonData(
-                  color: colors.primary,
-                  style: ButtonStyle(
-                    backgroundColor: MaterialStatePropertyAll(
-                      colors.primary.withOpacity(0.16),
-                    ),
-                    shape: MaterialStatePropertyAll(
-                      RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                      iconButtonSelectedData: IconButtonData(
+                        color: colors.primary,
+                        style: ButtonStyle(
+                          backgroundColor: WidgetStatePropertyAll(
+                            colors.primary.withOpacity(0.14),
+                          ),
+                          shape: WidgetStatePropertyAll(
+                            RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                          padding: const WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          ),
+                        ),
                       ),
-                    ),
-                    padding: const MaterialStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Expanded(
             child: Focus(
               child: Container(
                 decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withOpacity(0.6),
+                  color: colors.surfaceContainerHighest.withOpacity(0.6),
                   border: Border.all(color: colors.onSurface.withOpacity(0.12)),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: QuillEditor(
+                child: QuillEditor.basic(
                   controller: controller,
-                  scrollController: ScrollController(),
-                  focusNode: FocusNode(),
                   config: QuillEditorConfig(
-                    padding: const EdgeInsets.all(12),
                     scrollable: true,
                     autoFocus: false,
                     expands: true,
+                    padding: const EdgeInsets.all(12),
                     placeholder: 'Start writing your note here...',
                   ),
                 ),
@@ -449,7 +452,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: colors.surfaceVariant,
+                    color: colors.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: colors.onSurface.withOpacity(0.08),
@@ -477,13 +480,13 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                 const SizedBox(height: 12),
                 Expanded(
                   child: Container(
-                    decoration: BoxDecoration(
-                      color: colors.surfaceVariant,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: colors.onSurface.withOpacity(0.08),
-                      ),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: colors.onSurface.withOpacity(0.08),
                     ),
+                  ),
                     child: _buildNotesList(),
                   ),
                 ),

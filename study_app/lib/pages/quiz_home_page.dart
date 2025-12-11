@@ -1,33 +1,30 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 
-import '../models/flashcard_deck.dart';
+import '../models/quiz.dart';
 import '../models/subject.dart';
 import '../models/topic.dart';
-
-import '../pages/flashcard_editor_page.dart';
-import '../pages/flashcard_review_page.dart';
+import '../pages/quiz_editor_page.dart';
 import '../pages/subjects_panel.dart';
 import '../pages/topics_panel.dart';
-
-import '../services/flashcard_service.dart';
+import '../services/quiz_service.dart';
 import '../services/subject_services.dart';
 import '../services/topic_service.dart';
 
-class FlashcardHomePage extends StatefulWidget {
-  const FlashcardHomePage({super.key});
+class QuizHomePage extends StatefulWidget {
+  const QuizHomePage({super.key});
 
   @override
-  State<FlashcardHomePage> createState() => _FlashcardHomePageState();
+  State<QuizHomePage> createState() => _QuizHomePageState();
 }
 
-class _FlashcardHomePageState extends State<FlashcardHomePage> {
+class _QuizHomePageState extends State<QuizHomePage> {
   List<Subject> subjects = [];
   List<Topic> topics = [];
-  List<FlashcardDeck> decks = [];
+  List<Quiz> quizzes = [];
 
   int selectedSubject = 0;
   int selectedTopic = 0;
@@ -45,7 +42,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
       await _loadTopics(subjects[0].id);
     } else {
       topics = [];
-      decks = [];
+      quizzes = [];
       selectedSubject = 0;
       selectedTopic = 0;
     }
@@ -56,26 +53,25 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
     topics = await topicService.getTopicsForSubject(subjectId);
     if (topics.isNotEmpty) {
       selectedTopic = 0;
-      await _loadDecks(topics[0].id);
+      await _loadQuizzes(topics[0].id);
     } else {
       selectedTopic = 0;
-      decks = [];
+      quizzes = [];
     }
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadDecks(int topicId) async {
+  Future<void> _loadQuizzes(int topicId) async {
     if (topicId == 0) {
-      decks = [];
+      quizzes = [];
     } else {
-      decks = await flashcardService.getDecksByTopic(topicId);
+      quizzes = await quizService.getQuizzesByTopic(topicId);
     }
     if (mounted) setState(() {});
   }
 
   Future<void> _addSubject() async {
     final controller = TextEditingController();
-
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -86,10 +82,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
           decoration: const InputDecoration(hintText: "Enter subject name"),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           TextButton(
             onPressed: () async {
               final name = controller.text.trim();
@@ -97,8 +90,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                 await subjectService.addSubject(name);
                 await _loadSubjects();
               }
-              if (!mounted) return;
-              Navigator.pop(context);
+              if (mounted) Navigator.pop(context);
             },
             child: const Text("Add"),
           ),
@@ -109,10 +101,8 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
 
   Future<void> _addTopic() async {
     if (subjects.isEmpty) return;
-
     final controller = TextEditingController();
     final subjectId = subjects[selectedSubject].id;
-
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -123,10 +113,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
           decoration: const InputDecoration(hintText: "Enter topic name"),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           TextButton(
             onPressed: () async {
               final name = controller.text.trim();
@@ -134,8 +121,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                 await topicService.addTopic(subjectId, name);
                 await _loadTopics(subjectId);
               }
-              if (!mounted) return;
-              Navigator.pop(context);
+              if (mounted) Navigator.pop(context);
             },
             child: const Text("Add"),
           ),
@@ -144,161 +130,135 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
     );
   }
 
-  Future<void> _addDeck() async {
+  Future<void> _addQuiz() async {
     if (topics.isEmpty || selectedTopic >= topics.length) return;
-
-    final controller = TextEditingController();
     final topicId = topics[selectedTopic].id;
-
+    final controller = TextEditingController();
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text("New Deck"),
+        title: const Text("New Quiz"),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: "Enter deck name"),
+          decoration: const InputDecoration(hintText: "Quiz title"),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           TextButton(
             onPressed: () async {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
-                final newDeckId = await flashcardService.createDeck(topicId, name);
-                await _loadDecks(topicId);
-                final newDeck = decks.firstWhere(
-                  (d) => d.id == newDeckId,
-                  orElse: () => FlashcardDeck()
-                    ..id = newDeckId
-                    ..topicId = topicId
-                    ..name = name,
-                );
+                final id = await quizService.createQuiz(topicId: topicId, title: name);
+                await _loadQuizzes(topicId);
                 if (!mounted) return;
+                final quiz = quizzes.firstWhere((q) => q.id == id, orElse: () => Quiz()
+                  ..id = id
+                  ..topicId = topicId
+                  ..title = name);
                 Navigator.pop(context);
                 if (!mounted) return;
                 await Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => FlashcardsEditorPage(deck: newDeck),
-                  ),
+                  MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
                 );
-                await _loadDecks(topicId);
-                return;
+                await _loadQuizzes(topicId);
+              } else {
+                Navigator.pop(context);
               }
-              if (!mounted) return;
-              Navigator.pop(context);
             },
-            child: const Text("Add"),
+            child: const Text("Create"),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _deleteDeck(FlashcardDeck deck) async {
-    final shouldDelete = await showDialog<bool>(
+  Future<void> _deleteQuiz(Quiz quiz) async {
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text("Delete deck?"),
-        content: Text(
-          "All cards in \"${deck.name}\" will be removed.",
-        ),
+        title: const Text("Delete quiz?"),
+        content: Text('This will remove "${quiz.title}" and its questions.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancel"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              "Delete",
-              style: TextStyle(color: Colors.red),
-            ),
+            child: const Text("Delete", style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
-
-    if (shouldDelete ?? false) {
-      await flashcardService.deleteDeck(deck.id);
-      await _loadDecks(deck.topicId);
+    if (confirm == true) {
+      await quizService.deleteQuiz(quiz.id);
+      await _loadQuizzes(quiz.topicId);
     }
   }
 
-  Future<void> _importDeckFromFile(int topicId) async {
-    final result = await FilePicker.platform.pickFiles(
-      dialogTitle: "Import deck (.json)",
+  Future<void> _importQuiz(int topicId) async {
+    final pick = await FilePicker.platform.pickFiles(
+      dialogTitle: "Import quiz (.json)",
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
-    if (result == null || result.files.single.path == null) return;
-
+    if (pick == null || pick.files.single.path == null) return;
     try {
-      final file = File(result.files.single.path!);
+      final file = File(pick.files.single.path!);
       final content = await file.readAsString();
       final data = jsonDecode(content) as Map<String, dynamic>;
-
-      await flashcardService.importDeckData(topicId, data);
-      await _loadDecks(topicId);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Deck imported successfully.")),
-      );
+      await quizService.importQuiz(topicId, data);
+      await _loadQuizzes(topicId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Quiz imported.")));
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to import deck: $e")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Import failed: $e")));
+      }
     }
   }
 
-  Future<void> _importAnkiDeck(int topicId) async {
-    final result = await FilePicker.platform.pickFiles(
-      dialogTitle: "Import Anki deck (.apkg)",
-      type: FileType.custom,
-      allowedExtensions: ['apkg'],
-    );
-    if (result == null || result.files.single.path == null) return;
-
-    final path = result.files.single.path!;
+  Future<void> _exportQuiz(Quiz quiz) async {
     try {
-      await flashcardService.importAnkiApkg(topicId, path);
-      await _loadDecks(topicId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Anki deck imported.")),
+      final data = await quizService.exportQuiz(quiz.id);
+      if (data.isEmpty) return;
+      final defaultName = '${quiz.title.replaceAll(' ', '_')}.json';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: "Export quiz",
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: ['json'],
       );
+      if (savePath == null) return;
+      final file = File(savePath);
+      await file.writeAsString(jsonEncode(data));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Exported to ${file.path}")),
+        );
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to import Anki deck: $e")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Export failed: $e")));
+      }
     }
   }
 
-  Widget _buildDecksList(int currentTopicId) {
+  Widget _buildQuizzesList(int currentTopicId) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-
     if (currentTopicId == 0) {
-      return const Center(child: Text("Select a topic to see its decks."));
+      return const Center(child: Text("Select a topic to see its quizzes."));
     }
-
-    if (decks.isEmpty) {
-      return const Center(child: Text("No decks yet. Add one to start."));
+    if (quizzes.isEmpty) {
+      return const Center(child: Text("No quizzes yet. Add one to start."));
     }
-
     return ListView.separated(
       padding: const EdgeInsets.all(10),
-      itemCount: decks.length,
+      itemCount: quizzes.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, i) {
-        final deck = decks[i];
+        final quiz = quizzes[i];
         return Container(
           decoration: BoxDecoration(
             color: colors.surfaceContainerHighest,
@@ -307,54 +267,41 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
           ),
           child: ListTile(
             title: Text(
-              deck.name,
-              style: textTheme.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: colors.onSurface,
-              ),
+              quiz.title,
+              style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
-              "Deck ID: ${deck.id}",
-              style: textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
+              quiz.description ?? '',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
+            trailing: Wrap(
+              spacing: 4,
               children: [
                 IconButton(
-                  tooltip: "Review",
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => FlashcardReviewPage(deck: deck),
-                    ),
-                  ),
+                  tooltip: "Export",
+                  icon: const Icon(Icons.file_download_outlined),
+                  onPressed: () => _exportQuiz(quiz),
                 ),
                 IconButton(
                   tooltip: "Edit",
                   icon: const Icon(Icons.edit_outlined),
                   onPressed: () => Navigator.push(
                     context,
-                    MaterialPageRoute(
-                      builder: (_) => FlashcardsEditorPage(deck: deck),
-                    ),
-                  ).then((_) => _loadDecks(deck.topicId)),
+                    MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
+                  ).then((_) => _loadQuizzes(quiz.topicId)),
                 ),
                 IconButton(
                   tooltip: "Delete",
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () => _deleteDeck(deck),
+                  onPressed: () => _deleteQuiz(quiz),
                 ),
               ],
             ),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => FlashcardsEditorPage(deck: deck),
-              ),
-            ).then((_) => _loadDecks(deck.topicId)),
+              MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
+            ).then((_) => _loadQuizzes(quiz.topicId)),
           ),
         );
       },
@@ -389,7 +336,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                   selectedSubject = i;
                   selectedTopic = 0;
                   topics = [];
-                  decks = [];
+                  quizzes = [];
                 });
                 await _loadTopics(subjects[i].id);
               },
@@ -406,9 +353,9 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                 if (i >= topics.length) return;
                 setState(() {
                   selectedTopic = i;
-                  decks = [];
+                  quizzes = [];
                 });
-                await _loadDecks(topics[i].id);
+                await _loadQuizzes(topics[i].id);
               },
             ),
           ),
@@ -426,34 +373,24 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        "Decks",
-                        style: textTheme.titleMedium,
-                      ),
+                      Text("Quizzes", style: textTheme.titleMedium),
                       const Spacer(),
                       TextButton.icon(
                         onPressed: currentTopicId == 0
                             ? null
-                            : () => _importAnkiDeck(currentTopicId),
-                        icon: const Icon(Icons.cloud_download_outlined, size: 18),
-                        label: const Text("Import .apkg"),
-                      ),
-                      TextButton.icon(
-                        onPressed: currentTopicId == 0
-                            ? null
-                            : () => _importDeckFromFile(currentTopicId),
+                            : () => _importQuiz(currentTopicId),
                         icon: const Icon(Icons.file_upload_outlined, size: 18),
-                        label: const Text("Import Deck"),
+                        label: const Text("Import"),
                       ),
                       TextButton.icon(
-                        onPressed: currentTopicId == 0 ? null : _addDeck,
+                        onPressed: currentTopicId == 0 ? null : _addQuiz,
                         icon: const Icon(Icons.add_rounded, size: 18),
-                        label: const Text("New Deck"),
+                        label: const Text("New Quiz"),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Expanded(child: _buildDecksList(currentTopicId)),
+                  Expanded(child: _buildQuizzesList(currentTopicId)),
                 ],
               ),
             ),

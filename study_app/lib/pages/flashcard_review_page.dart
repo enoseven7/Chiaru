@@ -22,12 +22,15 @@ class FlashcardReviewPage extends StatefulWidget {
 }
 
 class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
+  static const int _maxNewPerSession = 20;
   List<Flashcard> cards = [];
+  List<Flashcard> queue = [];
   int index = 0;
   bool showBack = false;
   late final AudioPlayer _player;
   bool _isPlaying = false;
   String? _audioPath;
+  bool _onlyDue = true;
 
   @override
   void initState() {
@@ -41,8 +44,27 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
 
   Future<void> _load() async {
     cards = await flashcardService.getFlashcardsByDeck(widget.deck.id);
-    cards.sort((a, b) => (a.dueAt).compareTo(b.dueAt));
-    index = widget.startIndex.clamp(0, cards.isEmpty ? 0 : cards.length - 1);
+    _rebuildQueue(startIndex: widget.startIndex);
+  }
+
+  void _rebuildQueue({int? startIndex}) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (_onlyDue) {
+      final dueCards = cards.where((c) => c.dueAt <= nowMs && c.dueAt != 0).toList();
+      final newCards = cards.where((c) => c.dueAt == 0).take(_maxNewPerSession).toList();
+      queue = [...dueCards, ...newCards];
+    } else {
+      queue = List<Flashcard>.from(cards);
+    }
+
+    queue.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+
+    if (queue.isEmpty) {
+      index = 0;
+    } else {
+      index = (startIndex ?? index).clamp(0, queue.length - 1);
+    }
+
     if (!mounted) return;
     setState(() {
       showBack = false;
@@ -55,10 +77,10 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
   }
 
   void _next() {
-    if (cards.isEmpty) return;
+    if (queue.isEmpty) return;
     if (!mounted) return;
     setState(() {
-      if (index < cards.length - 1) {
+      if (index < queue.length - 1) {
         index++;
       } else {
         index = 0;
@@ -69,11 +91,25 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
   }
 
   Future<void> _gradeCard(int quality) async {
-    if (cards.isEmpty) return;
-    final current = cards[index];
-    final updated = await flashcardService.reviewFlashcard(current.id, quality);
-    if (updated != null) {
-      cards[index] = updated;
+    if (queue.isEmpty) return;
+    final current = queue[index];
+    final outcome = await flashcardService.reviewFlashcard(current.id, quality);
+    if (outcome != null) {
+      final pos = cards.indexWhere((c) => c.id == outcome.card.id);
+      if (pos != -1) {
+        cards[pos] = outcome.card;
+      }
+      _rebuildQueue();
+
+      if (mounted) {
+        final due = DateTime.fromMillisecondsSinceEpoch(outcome.dueAtMs).toLocal();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Scheduled in ${outcome.scheduledLabel} — due $due"),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
     if (!mounted) return;
     _next();
@@ -110,27 +146,72 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (cards.isEmpty) {
-      return Scaffold(body: Center(child: Text("No cards")));
+    if (queue.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Review"),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_onlyDue ? "No due cards" : "No cards"),
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: () => setState(() {
+                  _onlyDue = false;
+                  _rebuildQueue();
+                }),
+                child: const Text("Show all cards"),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
-    final card = cards[index];
+    final card = queue[index];
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final dueToday = cards.where((c) => c.dueAt <= now && c.dueAt != 0).length;
+    final newAvailable = cards.where((c) => c.dueAt == 0).length;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text("Review"),
+        title: const Text("Review"),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _onlyDue = !_onlyDue;
+                _rebuildQueue();
+              });
+            },
+            child: Text(_onlyDue ? "Due only" : "All cards"),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
             Text(
-              "Card ${index + 1} of ${cards.length}",
+              "Card ${index + 1} of ${queue.length}",
               style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _onlyDue
+                  ? "Due: $dueToday, New: ${newAvailable > _maxNewPerSession ? _maxNewPerSession : newAvailable}/$newAvailable"
+                  : "Cards in session: ${queue.length}",
+              style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -146,7 +227,7 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
                       padding: const EdgeInsets.all(24),
                       margin: const EdgeInsets.symmetric(horizontal: 24),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(

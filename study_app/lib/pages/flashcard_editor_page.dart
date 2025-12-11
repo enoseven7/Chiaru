@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -30,6 +31,60 @@ class _FlashcardsEditorPageState extends State<FlashcardsEditorPage> {
   Future<void> _load() async {
     cards = await flashcardService.getFlashcardsByDeck(widget.deck.id);
     setState(() {});
+  }
+
+  Future<void> _exportDeck() async {
+    try {
+      final data = await flashcardService.exportDeckData(widget.deck.id);
+      if (data.isEmpty) return;
+
+      final defaultName = "${widget.deck.name.replaceAll(' ', '_')}.json";
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: "Export deck",
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (savePath == null) return;
+
+      final file = File(savePath);
+      await file.writeAsString(jsonEncode(data));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Exported to ${file.path}")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to export: $e")),
+      );
+    }
+  }
+
+  Future<void> _importCards() async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: "Import cards (.json)",
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (result == null || result.files.single.path == null) return;
+
+    try {
+      final file = File(result.files.single.path!);
+      final content = await file.readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+      await flashcardService.importCardsIntoDeck(widget.deck.id, data);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Cards imported.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to import cards: $e")),
+      );
+    }
   }
 
   Future<String?> _pickFile({required FileType type}) async {
@@ -173,7 +228,7 @@ class _FlashcardsEditorPageState extends State<FlashcardsEditorPage> {
                 onPressed: () async {
                     if (isEdit) {
                       await flashcardService.updateFlashcard(
-                        card!.id,
+                        card.id,
                         front: front.text,
                         back: back.text,
                         imagePath: imagePath,
@@ -210,57 +265,91 @@ class _FlashcardsEditorPageState extends State<FlashcardsEditorPage> {
       appBar: AppBar(
         title: Text(widget.deck.name),
         actions: [
-          IconButton(icon: const Icon(Icons.add), onPressed: () => _openCardEditor()),
+          IconButton(
+            tooltip: "Import cards",
+            icon: const Icon(Icons.file_upload_outlined),
+            onPressed: _importCards,
+          ),
+          IconButton(
+            tooltip: "Export deck",
+            icon: const Icon(Icons.file_download_outlined),
+            onPressed: _exportDeck,
+          ),
+          IconButton(
+            tooltip: "Add card",
+            icon: const Icon(Icons.add),
+            onPressed: () => _openCardEditor(),
+          ),
         ],
       ),
-      body: ListView.builder(
-        itemCount: cards.length,
-        itemBuilder: (_, i) {
-          final card = cards[i];
-          return ListTile(
-            title: Text(card.front),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(card.back),
-                if (card.imagePath != null)
-                  Text(
-                    "Image: ${File(card.imagePath!).uri.pathSegments.last}",
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                if (card.audioPath != null)
-                  Text(
-                    "Audio: ${File(card.audioPath!).uri.pathSegments.last}",
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-              ],
-            ),
-            trailing: Wrap(
-              spacing: 4,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  tooltip: "Review from here",
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => FlashcardReviewPage(deck: widget.deck, startIndex: i),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete),
-                  onPressed: () async {
-                    await flashcardService.deleteFlashcard(card.id);
-                    await _load();
-                  },
-                ),
-              ],
-            ),
-            onTap: () => _openCardEditor(card: card),
-          );
-        },
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openCardEditor(),
+        icon: const Icon(Icons.add),
+        label: const Text("Add card"),
       ),
+      body: cards.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("No cards yet."),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: () => _openCardEditor(),
+                    icon: const Icon(Icons.add),
+                    label: const Text("Add your first card"),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              itemCount: cards.length,
+              itemBuilder: (_, i) {
+                final card = cards[i];
+                return ListTile(
+                  title: Text(card.front),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(card.back),
+                      if (card.imagePath != null)
+                        Text(
+                          "Image: ${File(card.imagePath!).uri.pathSegments.last}",
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      if (card.audioPath != null)
+                        Text(
+                          "Audio: ${File(card.audioPath!).uri.pathSegments.last}",
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
+                  trailing: Wrap(
+                    spacing: 4,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        tooltip: "Review from here",
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => FlashcardReviewPage(deck: widget.deck, startIndex: i),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete),
+                        onPressed: () async {
+                          await flashcardService.deleteFlashcard(card.id);
+                          await _load();
+                        },
+                      ),
+                    ],
+                  ),
+                  onTap: () => _openCardEditor(card: card),
+                );
+              },
+            ),
     );
   }
 }

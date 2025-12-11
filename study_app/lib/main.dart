@@ -9,14 +9,20 @@ import 'models/flashcard_deck.dart';
 import 'models/note.dart';
 import 'models/subject.dart';
 import 'models/topic.dart';
+import 'models/quiz.dart';
+import 'models/quiz_question.dart';
+import 'models/teach_settings.dart';
 
 import 'pages/flashcard_home_page.dart';
 import 'pages/notes_workspace_page.dart';
-
+import 'pages/quiz_home_page.dart';
+import 'pages/home_dashboard_page.dart';
+import 'pages/teach_mode_page.dart';
 
 late Isar isar;
 
 enum AppSection {
+  home,
   notes,
   flashcards,
   quizzes,
@@ -30,7 +36,16 @@ void main() async {
   final dir = await getApplicationDocumentsDirectory();
 
   isar = await Isar.open(
-    [SubjectSchema, TopicSchema, NoteSchema, FlashcardDeckSchema, FlashcardSchema],
+    [
+      SubjectSchema,
+      TopicSchema,
+      NoteSchema,
+      FlashcardDeckSchema,
+      FlashcardSchema,
+      QuizSchema,
+      QuizQuestionSchema,
+      TeachSettingsSchema,
+    ],
     directory: dir.path,
   );
 
@@ -43,26 +58,44 @@ class StudyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    final headlineFont = GoogleFonts.spaceGrotesk();
+    final headlineFont = GoogleFonts.workSans();
     final bodyFont = GoogleFonts.inter();
 
-    final baseColorScheme = ColorScheme.fromSeed(
+    // Sleek, VSCode/Notion-inspired palette: cool neutrals with a single accent.
+    const surface = Color(0xFF0F1116);
+    const panel = Color(0xFF141820);
+    const accent = Color(0xFF5CC8FF);
+    final baseColorScheme = ColorScheme(
       brightness: Brightness.dark,
-      seedColor: const Color(0xFF67E8F9),
-      surface: const Color(0xFF161A22),
-    ).copyWith(
-      primary: const Color(0xFF67E8F9),
-      secondary: const Color(0xFF94A3B8),
-      surface: const Color(0xFF161A22),
-      surfaceContainerHighest: const Color(0xFF141820),
-      surfaceContainerHigh: const Color(0xFF141820),
-      surfaceContainer: const Color(0xFF141820),
-      surfaceContainerLow: const Color(0xFF141820),
-      surfaceContainerLowest: const Color(0xFF0F1115),
-      onSurface: const Color(0xFFDDE4F0),
-      onSurfaceVariant: const Color(0xFF9CA3AF),
-      error: const Color(0xFFF43F5E),
-      onError: Colors.white,
+      primary: accent,
+      onPrimary: Colors.black,
+      secondary: const Color(0xFF8BA1B6),
+      onSecondary: Colors.black,
+      error: const Color(0xFFF97066),
+      onError: Colors.black,
+      surface: surface,
+      onSurface: const Color(0xFFE2E8F0),
+      surfaceTint: accent,
+      onSurfaceVariant: const Color(0xFF94A3B8),
+      outline: Colors.white.withOpacity(0.04),
+      shadow: Colors.black,
+      outlineVariant: Colors.white.withOpacity(0.08),
+      scrim: Colors.black,
+      inverseSurface: const Color(0xFFE2E8F0),
+      inversePrimary: accent,
+      tertiary: const Color(0xFFCBD5E1),
+      onTertiary: Colors.black,
+      primaryContainer: panel,
+      onPrimaryContainer: const Color(0xFFE2E8F0),
+      secondaryContainer: panel,
+      onSecondaryContainer: const Color(0xFFE2E8F0),
+      surfaceContainerHighest: panel,
+      surfaceContainerHigh: panel,
+      surfaceContainer: panel,
+      surfaceContainerLow: surface,
+      surfaceContainerLowest: surface,
+      surfaceBright: const Color(0xFF181C23),
+      surfaceDim: surface,
     );
 
     return MaterialApp(
@@ -82,9 +115,10 @@ class StudyApp extends StatelessWidget {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: baseColorScheme.surface,
         colorScheme: baseColorScheme,
-        cardColor: baseColorScheme.surfaceContainerHighest,
+        cardColor: baseColorScheme.surfaceContainerHigh,
+        visualDensity: VisualDensity.standard,
         appBarTheme: AppBarTheme(
-          backgroundColor: baseColorScheme.surfaceContainerHighest,
+          backgroundColor: baseColorScheme.surface,
           foregroundColor: baseColorScheme.onSurface,
           elevation: 0,
           scrolledUnderElevation: 0,
@@ -93,6 +127,7 @@ class StudyApp extends StatelessWidget {
             fontSize: 20,
             fontWeight: FontWeight.w600,
             color: baseColorScheme.onSurface,
+            letterSpacing: -0.2,
           ),
         ),
         textTheme: TextTheme(
@@ -109,17 +144,17 @@ class StudyApp extends StatelessWidget {
             letterSpacing: -0.05,
           ),
           bodyLarge: bodyFont.copyWith(
-            fontSize: 17,
-            height: 1.5,
+            fontSize: 16,
+            height: 1.4,
             color: baseColorScheme.onSurface,
           ),
           bodyMedium: bodyFont.copyWith(
-            fontSize: 15,
-            height: 1.45,
+            fontSize: 14,
+            height: 1.35,
             color: baseColorScheme.onSurfaceVariant,
           ),
           labelLarge: bodyFont.copyWith(
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.2,
             color: baseColorScheme.onSurface,
@@ -129,11 +164,56 @@ class StudyApp extends StatelessWidget {
           iconColor: baseColorScheme.onSurfaceVariant,
           textColor: baseColorScheme.onSurface,
           selectedColor: baseColorScheme.primary,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         ),
-        dividerColor: baseColorScheme.onSurface.withValues(alpha: 0.08),
+        dividerColor: baseColorScheme.outline,
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
         splashColor: Colors.transparent,
+        cardTheme: CardThemeData(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: baseColorScheme.surfaceContainerLow,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: baseColorScheme.outline),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: baseColorScheme.outline),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: baseColorScheme.primary, width: 1.4),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            backgroundColor: baseColorScheme.primary,
+            foregroundColor: Colors.black,
+            elevation: 0,
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            side: BorderSide(color: baseColorScheme.outline),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          ),
+        ),
       ),
 
 
@@ -152,7 +232,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  AppSection currentSection = AppSection.notes;
+  AppSection currentSection = AppSection.home;
 
   @override
   Widget build(BuildContext context) {
@@ -162,6 +242,10 @@ class _MainScreenState extends State<MainScreen> {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Text('Study App', style: Theme.of(context).appBarTheme.titleTextStyle),
+            const SizedBox(width: 32),
+            _navButton("Home", AppSection.home),
+            const SizedBox(width: 12),
             _navButton("Notes", AppSection.notes),
             const SizedBox(width: 12),
             _navButton("Flashcards", AppSection.flashcards),
@@ -178,6 +262,8 @@ class _MainScreenState extends State<MainScreen> {
   
   Widget _buildSection() {
     switch (currentSection) {
+      case AppSection.home:
+        return const HomeDashboardPage();
       case AppSection.notes:
         return const NotesWorkspacePage();
       case AppSection.flashcards:
@@ -220,15 +306,16 @@ class QuizPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(child: Text('Quiz Page'));
+    return const QuizHomePage();
   }
 }
 
+// Alias to avoid conflict with the page class.
 class TeachModePage extends StatelessWidget {
   const TeachModePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Center(child: Text('Teach Mode Page'));
+    return const TeachModePageScreen();
   }
 }
