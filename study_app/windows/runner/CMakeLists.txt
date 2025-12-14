@@ -38,3 +38,29 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Copy native assets (plugin DLLs, etc.) into the debug/run output so F5 works.
+set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows")
+if(EXISTS "${NATIVE_ASSETS_DIR}")
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${NATIVE_ASSETS_DIR}"
+            "$<TARGET_FILE_DIR:${BINARY_NAME}>"
+    COMMENT "Copying native assets to runner output")
+endif()
+
+# Optionally copy a locally provided llama.dll into the runner output so debug runs find it.
+set(LLAMA_DLL_CANDIDATES
+  "${PROJECT_DIR}/llama.dll"
+  "${PROJECT_DIR}/bin/llama.dll"
+)
+foreach(dll_path ${LLAMA_DLL_CANDIDATES})
+  if(EXISTS "${dll_path}")
+    add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${dll_path}"
+              "$<TARGET_FILE_DIR:${BINARY_NAME}>/llama.dll"
+      COMMENT "Copying llama.dll from ${dll_path}")
+    break()
+  endif()
+endforeach()

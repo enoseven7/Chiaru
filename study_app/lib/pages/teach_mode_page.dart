@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/teach_settings.dart';
@@ -18,6 +20,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
   double downloadProgress = 0;
   LocalModelInfo? selectedModel;
   bool modelInstalled = false;
+  Timer? _saveTimer;
 
   final topicCtrl = TextEditingController();
   final audienceCtrl = TextEditingController(text: "peer");
@@ -30,6 +33,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
   @override
   void initState() {
     super.initState();
+    _attachAutosaveListeners();
     _load();
   }
 
@@ -41,7 +45,22 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
     apiKeyCtrl.dispose();
     cloudModelCtrl.dispose();
     cloudEndpointCtrl.dispose();
+    _saveTimer?.cancel();
     super.dispose();
+  }
+
+  void _attachAutosaveListeners() {
+    for (final ctrl in [apiKeyCtrl, cloudModelCtrl, cloudEndpointCtrl]) {
+      ctrl.addListener(_scheduleSave);
+    }
+  }
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _saveSettings();
+    });
   }
 
   Future<void> _load() async {
@@ -244,6 +263,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
       onSelectionChanged: (sel) {
         settings = (settings ?? TeachSettings())..provider = sel.first;
         setState(() {});
+        _scheduleSave();
       },
       style: ButtonStyle(
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
@@ -367,7 +387,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
           Text("Cloud settings", style: textTheme.titleSmall),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: settings!.cloudProvider,
+            initialValue: settings!.cloudProvider,
             items: const [
               DropdownMenuItem(value: 'openai', child: Text("OpenAI-compatible")),
               DropdownMenuItem(value: 'anthropic', child: Text("Anthropic")),
@@ -376,6 +396,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
               if (val == null) return;
               settings = (settings ?? TeachSettings())..cloudProvider = val;
               setState(() {});
+              _scheduleSave();
             },
             decoration: const InputDecoration(labelText: "Provider"),
           ),

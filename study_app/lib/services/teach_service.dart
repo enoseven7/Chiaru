@@ -147,7 +147,7 @@ class TeachService {
     }
 
     final prompt = """
-You are a concise tutor. Critique the explanation below for clarity, accuracy, and completeness. Topic: $topic. Audience: $audience.
+You are tasked with critiquing a user's explanation for them to practice a topic using the Feynman technique. You should act the roll of a $audience, and tailor mannerisms that $audience would have into the critique.. Critique the explanation below for clarity, accuracy, and completeness. Topic: $topic. Audience: $audience. Ignore informal grammar or casual phrasing unless the user explicitly asks for a grammar-focused review.
 
 Explanation:
 $explanation
@@ -156,8 +156,9 @@ Respond with:
 Clarity: x/10
 Accuracy: x/10
 Completeness: x/10
+Improved Explanation: rewrite it more clearly for the stated audience.
 
-Feedback: bullet points, brief.
+Feedback: bullet points, brief (avoid focusing on casual grammar unless requested).
 Follow-ups: 2-3 suggested questions.
 """;
 
@@ -179,7 +180,7 @@ Follow-ups: 2-3 suggested questions.
     String audience = 'peer',
   }) async {
     final prompt = """
-You are a concise tutor. Critique the explanation below for clarity, accuracy, and completeness. Topic: $topic. Audience: $audience.
+You are a concise tutor. Critique the explanation below for clarity, accuracy, and completeness. Topic: $topic. Audience: $audience. Ignore informal grammar or casual phrasing unless the user explicitly asks for a grammar-focused review.
 
 Explanation:
 $explanation
@@ -188,8 +189,9 @@ Respond with:
 Clarity: x/10
 Accuracy: x/10
 Completeness: x/10
+Improved Explanation: rewrite it more clearly for the stated audience.
 
-Feedback: bullet points, brief.
+Feedback: bullet points, brief (avoid focusing on casual grammar unless requested).
 Follow-ups: 2-3 suggested questions.
 """;
 

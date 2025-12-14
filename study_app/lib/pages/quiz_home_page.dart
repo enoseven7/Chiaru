@@ -28,6 +28,10 @@ class _QuizHomePageState extends State<QuizHomePage> {
 
   int selectedSubject = 0;
   int selectedTopic = 0;
+  double subjectsWidth = 170;
+  double topicsWidth = 220;
+  bool subjectsCollapsed = false;
+  bool topicsCollapsed = false;
 
   @override
   void initState() {
@@ -325,39 +329,69 @@ class _QuizHomePageState extends State<QuizHomePage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 150,
-            child: SubjectsPanel(
-              subjects: subjects,
-              selectedIndex: selectedSubject,
-              addSubject: _addSubject,
-              onSelect: (i) async {
-                setState(() {
-                  selectedSubject = i;
-                  selectedTopic = 0;
-                  topics = [];
-                  quizzes = [];
-                });
-                await _loadTopics(subjects[i].id);
-              },
-            ),
+          _ResizablePanel(
+            width: subjectsCollapsed ? 56 : subjectsWidth,
+            minWidth: 140,
+            collapsed: subjectsCollapsed,
+            onDrag: (delta) {
+              setState(() {
+                subjectsCollapsed = false;
+                subjectsWidth = (subjectsWidth + delta).clamp(140, 320);
+              });
+            },
+            onToggleCollapse: () => setState(() => subjectsCollapsed = !subjectsCollapsed),
+            child: subjectsCollapsed
+                ? _CollapsedRail(
+                    label: "Subjects",
+                    icon: Icons.book_outlined,
+                    onExpand: () => setState(() => subjectsCollapsed = false),
+                  )
+                : SubjectsPanel(
+                    subjects: subjects,
+                    selectedIndex: selectedSubject,
+                    addSubject: _addSubject,
+                    onSelect: (i) async {
+                      setState(() {
+                        selectedSubject = i;
+                        selectedTopic = 0;
+                        topics = [];
+                        quizzes = [];
+                      });
+                      await _loadTopics(subjects[i].id);
+                    },
+                  ),
           ),
-          SizedBox(
-            width: 220,
-            child: TopicsPanel(
-              topics: topics,
-              subjectId: currentSubjectId,
-              selectedIndex: selectedTopic,
-              addTopic: _addTopic,
-              onSelect: (i) async {
-                if (i >= topics.length) return;
-                setState(() {
-                  selectedTopic = i;
-                  quizzes = [];
-                });
-                await _loadQuizzes(topics[i].id);
-              },
-            ),
+          _ResizablePanel(
+            width: topicsCollapsed ? 56 : topicsWidth,
+            minWidth: 160,
+            collapsed: topicsCollapsed,
+            onDrag: (delta) {
+              setState(() {
+                topicsCollapsed = false;
+                topicsWidth = (topicsWidth + delta).clamp(160, 340);
+              });
+            },
+            onToggleCollapse: () => setState(() => topicsCollapsed = !topicsCollapsed),
+            child: topicsCollapsed
+                ? _CollapsedRail(
+                    label: "Topics",
+                    icon: Icons.label_outline,
+                    onExpand: () => setState(() => topicsCollapsed = false),
+                  )
+                : TopicsPanel(
+                    topics: topics,
+                    subjectId: currentSubjectId,
+                    selectedIndex: selectedTopic,
+                    addTopic: _addTopic,
+                    onSelect: (i) async {
+                      if (i >= topics.length) return;
+                      setState(() {
+                        selectedTopic = i;
+                        quizzes = [];
+                      });
+                      await _loadQuizzes(topics[i].id);
+                    },
+                  ),
           ),
           Expanded(
             child: Container(
@@ -396,6 +430,118 @@ class _QuizHomePageState extends State<QuizHomePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ResizablePanel extends StatelessWidget {
+  final double width;
+  final double minWidth;
+  final bool collapsed;
+  final Widget child;
+  final VoidCallback onToggleCollapse;
+  final void Function(double delta) onDrag;
+
+  const _ResizablePanel({
+    required this.width,
+    required this.minWidth,
+    required this.collapsed,
+    required this.child,
+    required this.onToggleCollapse,
+    required this.onDrag,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: width,
+          child: Stack(
+            children: [
+              Positioned.fill(child: child),
+              Positioned(
+                top: 8,
+                right: 6,
+                child: IconButton(
+                  icon: Icon(
+                    collapsed ? Icons.chevron_right : Icons.chevron_left,
+                    size: 18,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  tooltip: collapsed ? "Expand" : "Collapse",
+                  onPressed: onToggleCollapse,
+                  style: IconButton.styleFrom(
+                    padding: const EdgeInsets.all(8),
+                    backgroundColor: colors.surfaceContainerHighest.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeLeftRight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+            child: Container(
+              width: 8,
+              height: double.infinity,
+              color: Colors.transparent,
+              child: Center(
+                child: Container(
+                  width: 2,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: colors.onSurface.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CollapsedRail extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onExpand;
+
+  const _CollapsedRail({
+    required this.label,
+    required this.icon,
+    required this.onExpand,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return InkWell(
+      onTap: onExpand,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        child: RotatedBox(
+          quarterTurns: 3,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: colors.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Text(label, style: textTheme.labelLarge?.copyWith(color: colors.onSurfaceVariant)),
+            ],
+          ),
+        ),
       ),
     );
   }

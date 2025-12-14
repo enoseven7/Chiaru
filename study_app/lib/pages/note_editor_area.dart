@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:signature/signature.dart';
 
 import '../models/note.dart';
 import '../services/note_service.dart';
@@ -25,10 +29,28 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   List<Note> _notes = [];
   Note? _activeNote;
   bool _isLoading = false;
+  double _notesPanelWidth = 260;
+  bool _notesCollapsed = false;
+  bool _sketchCollapsed = true;
+  double _sketchHeight = 230;
+  late SignatureController _signatureController;
+  Color _penColor = Colors.blue;
+  bool _usingEraser = false;
+  bool _hasSignatureController = false;
+  final List<Color> _penPalette = const [
+    Colors.blue,
+    Colors.red,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.black,
+  ];
 
   @override
   void initState() {
     super.initState();
+    _signatureController = _createSignatureController();
+    _hasSignatureController = true;
     _initControllerForNote(null);
     _loadNotesForTopic();
   }
@@ -44,11 +66,43 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     }
   }
 
+  SignatureController _createSignatureController({
+    List<Point>? points,
+    Color? color,
+    double? strokeWidth,
+  }) {
+    final existingPoints = points ??
+        (_hasSignatureController ? List<Point>.from(_signatureController.points) : <Point>[]);
+    return SignatureController(
+      penStrokeWidth: strokeWidth ?? 3,
+      penColor: color ?? (_usingEraser ? Colors.white : _penColor),
+      exportBackgroundColor: Colors.white,
+      points: existingPoints,
+    );
+  }
+
+  void _updateSignatureController({Color? color, bool? useEraser}) {
+    final bool nextEraser = useEraser ?? _usingEraser;
+    final Color newPenColor = nextEraser ? Colors.white : (color ?? _penColor);
+    final points =
+        _hasSignatureController ? List<Point>.from(_signatureController.points) : <Point>[];
+    if (_hasSignatureController) {
+      _signatureController.dispose();
+    }
+    setState(() {
+      if (color != null) _penColor = color;
+      _usingEraser = nextEraser;
+      _signatureController = _createSignatureController(points: points, color: newPenColor);
+      _hasSignatureController = true;
+    });
+  }
+
   @override
   void dispose() {
     () async {
       await _saveCurrentNote();
     }();
+    _signatureController.dispose();
     _quillController?.dispose();
     super.dispose();
   }
@@ -159,6 +213,30 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       return preview;
     } catch (_) {
       return "(Invalid note)";
+    }
+  }
+
+  Future<void> _insertSketch(QuillController controller) async {
+    if (_signatureController.isEmpty) return;
+    try {
+      final Uint8List? png = await _signatureController.toPngBytes();
+      if (png == null) return;
+      final dataUri = 'data:image/png;base64,${base64Encode(png)}';
+
+      final sel = controller.selection;
+      final docLength = controller.document.length;
+      final index = (sel.baseOffset < 0 || sel.baseOffset > docLength) ? docLength : sel.baseOffset;
+      controller.replaceText(
+        index,
+        0,
+        BlockEmbed.image(dataUri),
+        TextSelection.collapsed(offset: index + 1),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to insert sketch: $e')),
+      );
     }
   }
 
@@ -295,6 +373,24 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
             ],
           ),
           const SizedBox(height: 10),
+          _SketchPad(
+            controller: _signatureController,
+            collapsed: _sketchCollapsed,
+            height: _sketchHeight,
+            penColor: _penColor,
+            palette: _penPalette,
+            onToggle: () => setState(() => _sketchCollapsed = !_sketchCollapsed),
+            onClear: () => _signatureController.clear(),
+            onEraseToggle: () => _updateSignatureController(useEraser: !_usingEraser),
+            onColorSelected: (c) => _updateSignatureController(color: c, useEraser: false),
+            onResize: (delta) {
+              setState(() {
+                _sketchCollapsed = false;
+                _sketchHeight = (_sketchHeight + delta).clamp(160, 420);
+              });
+            },
+          ),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             child: SingleChildScrollView(
@@ -416,6 +512,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                 child: QuillEditor.basic(
                   controller: controller,
                   config: QuillEditorConfig(
+                    embedBuilders: const [_ImageEmbedBuilder()],
                     scrollable: true,
                     autoFocus: false,
                     expands: true,
@@ -442,56 +539,71 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 260,
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: colors.onSurface.withOpacity(0.08),
-                    ),
-                  ),
-                  child: Row(
+          _ResizablePanel(
+            width: _notesCollapsed ? 56 : _notesPanelWidth,
+            minWidth: 180,
+            collapsed: _notesCollapsed,
+            onToggleCollapse: () => setState(() => _notesCollapsed = !_notesCollapsed),
+            onDrag: (dx) {
+              setState(() {
+                _notesCollapsed = false;
+                _notesPanelWidth = (_notesPanelWidth + dx).clamp(180, 360);
+              });
+            },
+            child: _notesCollapsed
+                ? _CollapsedRail(
+                    label: "Notes",
+                    icon: Icons.note_outlined,
+                    onExpand: () => setState(() => _notesCollapsed = false),
+                  )
+                : Column(
                     children: [
-                      Text("Notes", style: textTheme.labelLarge),
-                      const Spacer(),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          visualDensity: VisualDensity.compact,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
                         ),
-                        onPressed: widget.topicId == 0 ? null : _createNote,
-                        icon: const Icon(Icons.add_rounded, size: 18),
-                        label: const Text("New"),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: colors.onSurface.withOpacity(0.08),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Text("Notes", style: textTheme.labelLarge),
+                            const Spacer(),
+                            TextButton.icon(
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: widget.topicId == 0 ? null : _createNote,
+                              icon: const Icon(Icons.add_rounded, size: 18),
+                              label: const Text("New"),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: colors.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: colors.onSurface.withOpacity(0.08),
+                            ),
+                          ),
+                          child: _buildNotesList(),
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: Container(
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: colors.onSurface.withOpacity(0.08),
-                    ),
-                  ),
-                    child: _buildNotesList(),
-                  ),
-                ),
-              ],
-            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -499,6 +611,299 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                 ? const SizedBox.shrink()
                 : _buildEditor(controller),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResizablePanel extends StatelessWidget {
+  final double width;
+  final double minWidth;
+  final bool collapsed;
+  final Widget child;
+  final VoidCallback onToggleCollapse;
+  final void Function(double delta) onDrag;
+
+  const _ResizablePanel({
+    required this.width,
+    required this.minWidth,
+    required this.collapsed,
+    required this.child,
+    required this.onToggleCollapse,
+    required this.onDrag,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: width,
+          constraints: BoxConstraints(minWidth: collapsed ? 40 : minWidth),
+          child: Stack(
+            children: [
+              Positioned.fill(child: child),
+              Positioned(
+                top: 8,
+                right: 6,
+                child: IconButton(
+                  icon: Icon(
+                    collapsed ? Icons.chevron_right : Icons.chevron_left,
+                    size: 18,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  tooltip: collapsed ? "Expand" : "Collapse",
+                  onPressed: onToggleCollapse,
+                  style: IconButton.styleFrom(
+                    padding: const EdgeInsets.all(8),
+                    backgroundColor: colors.surfaceContainerHighest.withOpacity(0.6),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeLeftRight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+            child: Container(
+              width: 8,
+              height: double.infinity,
+              color: Colors.transparent,
+              child: Center(
+                child: Container(
+                  width: 2,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: colors.onSurface.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CollapsedRail extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onExpand;
+
+  const _CollapsedRail({
+    required this.label,
+    required this.icon,
+    required this.onExpand,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return InkWell(
+      onTap: onExpand,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        child: RotatedBox(
+          quarterTurns: 3,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: colors.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Text(label, style: textTheme.labelLarge?.copyWith(color: colors.onSurfaceVariant)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImageEmbedBuilder extends EmbedBuilder {
+  const _ImageEmbedBuilder();
+
+  @override
+  String get key => BlockEmbed.imageType;
+
+  @override
+  Widget build(BuildContext context, EmbedContext embedContext) {
+    final data = embedContext.node.value.data;
+    final source = data is String ? data : '';
+
+    Widget image;
+    if (source.startsWith('data:image')) {
+      final idx = source.indexOf(',');
+      final base64Str = idx != -1 ? source.substring(idx + 1) : source;
+      image = Image.memory(
+        base64Decode(base64Str),
+        fit: BoxFit.contain,
+      );
+    } else if (source.startsWith('file://')) {
+      image = Image.file(
+        File(Uri.parse(source).toFilePath()),
+        fit: BoxFit.contain,
+      );
+    } else if (source.startsWith('/')) {
+      image = Image.file(
+        File(source),
+        fit: BoxFit.contain,
+      );
+    } else {
+      image = Image.network(
+        source,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 420, maxWidth: 1200),
+        child: image,
+      ),
+    );
+  }
+}
+
+class _SketchPad extends StatelessWidget {
+  final SignatureController controller;
+  final bool collapsed;
+  final double height;
+  final Color penColor;
+  final List<Color> palette;
+  final VoidCallback onToggle;
+  final VoidCallback onClear;
+  final VoidCallback onEraseToggle;
+  final ValueChanged<Color> onColorSelected;
+  final ValueChanged<double> onResize;
+
+  const _SketchPad({
+    required this.controller,
+    required this.collapsed,
+    required this.height,
+    required this.penColor,
+    required this.palette,
+    required this.onToggle,
+    required this.onClear,
+    required this.onEraseToggle,
+    required this.onColorSelected,
+    required this.onResize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      height: collapsed ? 46 : height,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.onSurface.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text("Sketch pad", style: textTheme.bodyMedium),
+              const SizedBox(width: 10),
+              Wrap(
+                spacing: 6,
+                children: palette
+                    .map(
+                      (c) => GestureDetector(
+                        onTap: () => onColorSelected(c),
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: c == penColor ? colors.primary : colors.outline,
+                              width: c == penColor ? 2 : 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: collapsed ? "Show sketch pad" : "Hide sketch pad",
+                icon: Icon(collapsed ? Icons.edit : Icons.expand_less),
+                onPressed: onToggle,
+              ),
+            ],
+          ),
+          if (!collapsed) ...[
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colors.onSurface.withOpacity(0.1)),
+                ),
+                clipBehavior: Clip.hardEdge,
+                child: Signature(
+                  controller: controller,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text("Clear"),
+                ),
+                TextButton.icon(
+                  onPressed: onEraseToggle,
+                  icon: const Icon(Icons.auto_fix_normal_outlined),
+                  label: const Text("Eraser"),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            MouseRegion(
+              cursor: SystemMouseCursors.resizeUpDown,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onVerticalDragUpdate: (details) => onResize(details.delta.dy),
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Container(
+                    width: 48,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
