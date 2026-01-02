@@ -8,6 +8,7 @@ import '../models/quiz.dart';
 import '../models/quiz_question.dart';
 import '../models/subject.dart';
 import '../models/topic.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeDashboardPage extends StatefulWidget {
   const HomeDashboardPage({super.key, required this.onNavigate});
@@ -26,7 +27,8 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
   int cards = 0;
   int quizzes = 0;
   int questions = 0;
-  final List<double> _trendData = [3, 5, 4, 6, 8, 7, 9];
+  List<double> _trendData = const [];
+  bool _usageLogged = false;
 
   bool loading = true;
 
@@ -34,6 +36,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
   void initState() {
     super.initState();
     _loadStats();
+    _loadTrend();
   }
 
   Future<void> _loadStats() async {
@@ -54,6 +57,45 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
       quizzes = qz;
       questions = qq;
       loading = false;
+    });
+  }
+
+  Future<void> _loadTrend() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList('usage_trend_v1') ?? const [];
+    final parsed = raw.map((e) => double.tryParse(e) ?? 0).toList();
+    setState(() {
+      _trendData = parsed.isEmpty ? List.filled(7, 0) : parsed.take(14).toList();
+    });
+    if (!_usageLogged) {
+      await _bumpToday();
+    }
+  }
+
+  Future<void> _bumpToday() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now();
+    final stored = prefs.getString('usage_trend_date');
+    final lastDate = stored != null ? DateTime.tryParse(stored) : null;
+    // If last entry is today, increment; else shift and add a fresh point.
+    final data = List<double>.from(_trendData.isEmpty ? List.filled(7, 0) : _trendData);
+    if (lastDate != null &&
+        lastDate.year == today.year &&
+        lastDate.month == today.month &&
+        lastDate.day == today.day) {
+      if (data.isEmpty) data.add(0);
+      data[data.length - 1] = data.last + 1;
+    } else {
+      data.add(1);
+      if (data.length > 7) {
+        data.removeAt(0);
+      }
+    }
+    await prefs.setStringList('usage_trend_v1', data.map((d) => d.toString()).toList());
+    await prefs.setString('usage_trend_date', today.toIso8601String());
+    setState(() {
+      _trendData = data;
+      _usageLogged = true;
     });
   }
 
@@ -177,7 +219,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
   }
 
   Widget _buildHero(ColorScheme colors, TextTheme textTheme) {
-    final hasData = _trendData.isNotEmpty;
+    final hasData = _trendData.any((e) => e > 0);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -322,7 +364,9 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
   }
 
   Widget _buildTrendCard(ColorScheme colors, TextTheme textTheme, {bool showFrame = true}) {
-    final maxVal = _trendData.isEmpty ? 1.0 : _trendData.reduce((a, b) => a > b ? a : b);
+    final maxValRaw = _trendData.isEmpty ? 0.0 : _trendData.reduce((a, b) => a > b ? a : b);
+    final maxVal = maxValRaw <= 0 ? 1.0 : maxValRaw;
+    final hasAny = _trendData.any((e) => e > 0);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -348,7 +392,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 120,
+            height: 130,
             child: CustomPaint(
               painter: _SparklinePainter(
                 data: _trendData,
@@ -357,9 +401,23 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("Older sessions",
+                    style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
+                Text("Newest", style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
+              ],
+            ),
+          ),
           const SizedBox(height: 6),
           Text(
-            "Tip: keep a steady cadence — short daily sessions beat long gaps.",
+            hasAny
+                ? "Y-axis: points per session • X-axis: recent sessions (older → newer)"
+                : "No activity yet. Your first sessions will plot here.",
             style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
           ),
         ],
@@ -397,6 +455,14 @@ class _SparklinePainter extends CustomPainter {
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
     final path = Path();
     final fillPath = Path();
+
+    if (data.length == 1) {
+      final norm = maxY == 0 ? 0 : (data.first / maxY);
+      final y = size.height - (norm * size.height * 0.9);
+      final x = size.width * 0.5;
+      canvas.drawCircle(Offset(x, y), 3, paint..style = PaintingStyle.fill);
+      return;
+    }
 
     for (int i = 0; i < data.length; i++) {
       final x = (i / (data.length - 1)) * size.width;

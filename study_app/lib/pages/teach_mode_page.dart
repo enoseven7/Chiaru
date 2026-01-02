@@ -94,7 +94,12 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
 
   Future<void> _runCritique() async {
     if (busy || settings == null) return;
-    if (settings!.provider == 'local' && !modelInstalled) return;
+    if (settings!.provider == 'local') {
+      setState(() {
+        critique = "Local LLM is under development. Please switch to Cloud to continue.";
+      });
+      return;
+    }
     final topic = topicCtrl.text.trim();
     final audience = audienceCtrl.text.trim().isEmpty ? "peer" : audienceCtrl.text.trim();
     final explanation = explanationCtrl.text.trim();
@@ -274,97 +279,110 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
 
   Widget _localModelPanel(ColorScheme colors, TextTheme textTheme) {
     final model = selectedModel ?? availableLocalModels.first;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.outline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text("Local models", style: textTheme.titleSmall),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text(model.name, style: textTheme.bodyMedium),
-              const Spacer(),
-              Text("${(model.sizeBytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB",
-                  style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
-            ],
+    return Stack(
+      children: [
+        Opacity(
+          opacity: 0.35,
+          child: IgnorePointer(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.outline),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Local models", style: textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Text(model.name, style: textTheme.bodyMedium),
+                      const Spacer(),
+                      Text("${(model.sizeBytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB",
+                          style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (downloading) ...[
+                    LinearProgressIndicator(value: downloadProgress),
+                    const SizedBox(height: 6),
+                    Text("Downloading... ${(downloadProgress * 100).toStringAsFixed(0)}%",
+                        style: textTheme.bodySmall),
+                  ] else if (modelInstalled) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                        const SizedBox(width: 6),
+                        Text("Installed", style: textTheme.bodySmall),
+                        const Spacer(),
+                        TextButton.icon(
+                          onPressed: () {},
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text("Remove"),
+                        ),
+                      ],
+                    )
+                  ] else ...[
+                    FilledButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.download),
+                      label: const Text("Download & use"),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Downloads to app storage for offline use.",
+                      style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 8),
-          if (downloading) ...[
-            LinearProgressIndicator(value: downloadProgress),
-            const SizedBox(height: 6),
-            Text("Downloading... ${(downloadProgress * 100).toStringAsFixed(0)}%",
-                style: textTheme.bodySmall),
-          ] else if (modelInstalled) ...[
-            Row(
+        ),
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(
+              color: colors.surface.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colors.outline),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const Icon(Icons.check_circle, color: Colors.green, size: 18),
-                const SizedBox(width: 6),
-                Text("Installed", style: textTheme.bodySmall),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () async {
-                    await teachService.modelManager.remove(model);
-                    final installed = await teachService.modelManager.isInstalled(model);
-                    if (!mounted) return;
+                Icon(Icons.lock_clock, color: colors.primary),
+                const SizedBox(height: 8),
+                Text(
+                  "Local LLM is in development",
+                  style: textTheme.titleSmall?.copyWith(color: colors.onSurface),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  "Please use the Cloud provider for now.",
+                  style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () {
                     setState(() {
-                      modelInstalled = installed;
+                      settings = (settings ?? TeachSettings())..provider = 'cloud';
                     });
+                    _scheduleSave();
                   },
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text("Remove"),
+                  icon: const Icon(Icons.cloud_outlined),
+                  label: const Text("Switch to Cloud"),
                 ),
               ],
-            )
-          ] else ...[
-            FilledButton.icon(
-              onPressed: () async {
-                setState(() {
-                  downloading = true;
-                  downloadProgress = 0;
-                });
-                try {
-                  await teachService.modelManager.download(model, (p) {
-                    if (mounted) {
-                      setState(() => downloadProgress = p);
-                    }
-                  });
-                  final installed = await teachService.modelManager.isInstalled(model);
-                  if (!mounted) return;
-                  setState(() {
-                    modelInstalled = installed;
-                  });
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(SnackBar(content: Text("Download failed: $e")));
-                  }
-                } finally {
-                  if (mounted) {
-                    setState(() {
-                      downloading = false;
-                      downloadProgress = 0;
-                    });
-                  }
-                }
-              },
-              icon: const Icon(Icons.download),
-              label: const Text("Download & use"),
             ),
-            const SizedBox(height: 6),
-            Text(
-              "Downloads to app storage for offline use.",
-              style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-          ],
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 

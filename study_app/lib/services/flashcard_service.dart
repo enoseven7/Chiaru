@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:archive/archive.dart';
 import 'package:isar/isar.dart';
@@ -15,8 +16,15 @@ class FlashcardService {
 
   FlashcardService();
 
-  // Learning steps in minutes: first pass, then graduate to days.
-  static const List<int> _learningStepsMinutes = [10, 60]; // 10m, 1h before day review.
+  // Anki v2 defaults.
+  static const List<int> _learningStepsMinutes = [1, 10]; // minutes
+  static const List<int> _relearningStepsMinutes = [10]; // minutes
+  static const int _graduatingIntervalDays = 1;
+  static const int _easyIntervalDays = 4;
+  static const double _easyBonus = 1.3;
+  static const double _hardIntervalFactor = 1.2;
+  static const double _lapseIntervalFactor = 0.5;
+  static const int _minIntervalDays = 1;
 
   Future<List<FlashcardDeck>> getDecksByTopic(int topicId) async {
     return await isar.flashcardDecks
@@ -111,83 +119,95 @@ class FlashcardService {
     }
   }
 
-  /// SM-2 style scheduler with short learning steps. Quality: 0=Again, 2=Hard, 3=Good, 4=Easy.
+  /// SM-2-like scheduler with Anki-style learning/relearning steps.
   ///
-  /// - New cards: Hard keeps at first step; Good moves forward; Easy graduates immediately.
-  /// - Lapses: reset to learning steps.
-  /// - Reviews: classic SM-2 ease update and intervals, Easy gets a boost, Hard shortens slightly.
+  /// Learning steps (minutes) until graduation: Good -> 1 day, Easy -> 4 days.
+  /// Lapses return to steps with reduced interval; Hard/Good/Easy scale intervals in review.
   Future<FlashcardReviewOutcome?> reviewFlashcard(int flashcardId, int quality) async {
     final card = await isar.flashcards.get(flashcardId);
     if (card == null) return null;
 
     final now = DateTime.now();
     final clamped = quality.clamp(0, 4);
-    final wasLapse = clamped == 0;
-
-    // Determine if card is in learning (no interval days yet).
-    final inLearning = card.intervalDays == 0;
     int scheduledMinutes = 0;
-    String scheduledLabel;
+    bool wasLapse = false;
 
-    if (inLearning) {
-      // Learning (new or relearn)
-      if (wasLapse) {
-        card.repetitions = 0;
-        scheduledMinutes = _learningStepsMinutes.first;
-      } else if (clamped == 2) {
-        // Hard keeps on first step
-        scheduledMinutes = _learningStepsMinutes.first;
-      } else if (clamped == 3) {
-        // Good advances one step or graduates if past last
-        if (card.repetitions == 0) {
-          card.repetitions = 1;
-          scheduledMinutes = _learningStepsMinutes.length > 1
-              ? _learningStepsMinutes[1]
-              : _learningStepsMinutes.first;
-        } else {
-          // graduate to review
-          card.intervalDays = 1;
-          scheduledMinutes = 1440;
-        }
-      } else {
-        // Easy graduates immediately to a slightly longer first interval
-        card.intervalDays = 3;
-        scheduledMinutes = card.intervalDays * 1440;
-      }
+    final bool isLearning = card.intervalDays == 0;
+    final bool isNew = card.dueAt == 0 && card.repetitions == 0 && card.intervalDays == 0;
 
-      card.dueAt = now.add(Duration(minutes: scheduledMinutes)).millisecondsSinceEpoch;
-    } else {
-      // Review phase (SM-2ish)
-      if (wasLapse) {
-        card.lapses += 1;
+    if (isLearning || isNew) {
+      // Learning/relearning steps in minutes.
+      int stepIndex = card.repetitions.clamp(0, _learningStepsMinutes.length - 1);
+
+      if (clamped == 0) {
+        // Again: restart learning steps.
+        wasLapse = !isNew;
         card.repetitions = 0;
-        card.intervalDays = 0;
-        card.easeFactor = (card.easeFactor - 0.2).clamp(1.3, 2.8);
+        stepIndex = 0;
         scheduledMinutes = _learningStepsMinutes.first;
         card.dueAt = now.add(Duration(minutes: scheduledMinutes)).millisecondsSinceEpoch;
-      } else {
-        card.repetitions += 1;
-        final sm2Quality = (clamped + 1).clamp(1, 5);
-        final qd = 5 - sm2Quality;
-        final delta = 0.1 - qd * (0.08 + qd * 0.02);
-        card.easeFactor = (card.easeFactor + delta).clamp(1.3, 2.8);
-
-        int nextInterval;
-        if (card.repetitions == 2) {
-          nextInterval = 6;
+      } else if (clamped == 2) {
+        // Hard: stay on current step.
+        scheduledMinutes = _learningStepsMinutes[stepIndex];
+        card.easeFactor = (card.easeFactor - 0.15).clamp(1.3, 3.0);
+        card.dueAt = now.add(Duration(minutes: scheduledMinutes)).millisecondsSinceEpoch;
+      } else if (clamped == 3) {
+        // Good: advance a step or graduate.
+        if (stepIndex < _learningStepsMinutes.length - 1) {
+          stepIndex += 1;
+          card.repetitions = stepIndex;
+          scheduledMinutes = _learningStepsMinutes[stepIndex];
+          card.dueAt = now.add(Duration(minutes: scheduledMinutes)).millisecondsSinceEpoch;
         } else {
-          nextInterval = (card.intervalDays * card.easeFactor).round();
+          // Graduate to review.
+          card.intervalDays = _graduatingIntervalDays;
+          card.repetitions = 1;
+          scheduledMinutes = card.intervalDays * 1440;
+          card.dueAt = now.add(Duration(days: card.intervalDays)).millisecondsSinceEpoch;
         }
-
-        if (clamped == 4) {
-          nextInterval = (nextInterval * 1.3).round();
-        } else if (clamped == 2) {
-          nextInterval = (nextInterval * 1.2).round().clamp(1, 36500);
-        }
-
-        card.intervalDays = nextInterval.clamp(1, 36500);
+      } else if (clamped == 4) {
+        // Easy: graduate immediately to easy interval and boost ease slightly.
+        card.intervalDays = _easyIntervalDays;
+        card.repetitions = 1;
+        card.easeFactor = (card.easeFactor + 0.15).clamp(1.3, 3.0);
         scheduledMinutes = card.intervalDays * 1440;
         card.dueAt = now.add(Duration(days: card.intervalDays)).millisecondsSinceEpoch;
+      }
+    } else {
+      // Review phase with SM-2 interval math.
+      if (clamped == 0) {
+        // Lapse: reduce ease, send to relearning step.
+        wasLapse = true;
+        card.lapses += 1;
+        card.repetitions = 0;
+        card.easeFactor = (card.easeFactor - 0.2).clamp(1.3, 3.0);
+        card.intervalDays = max(_minIntervalDays, (card.intervalDays * _lapseIntervalFactor).round());
+        scheduledMinutes = _relearningStepsMinutes.first;
+        card.dueAt = now.add(Duration(minutes: scheduledMinutes)).millisecondsSinceEpoch;
+      } else {
+        // Calculate next interval.
+        double ease = card.easeFactor;
+        if (clamped == 2) {
+          ease = (ease - 0.15).clamp(1.3, 3.0);
+        } else if (clamped == 4) {
+          ease = (ease + 0.15).clamp(1.3, 3.0);
+        }
+        card.easeFactor = ease;
+
+        int nextInterval;
+        if (clamped == 2) {
+          nextInterval = max(_minIntervalDays, (card.intervalDays * _hardIntervalFactor).round());
+        } else if (clamped == 3) {
+          nextInterval = max(_minIntervalDays, (card.intervalDays * ease).round());
+        } else {
+          // Easy
+          nextInterval = max(_minIntervalDays, (card.intervalDays * ease * _easyBonus).round());
+        }
+
+        card.intervalDays = nextInterval.clamp(_minIntervalDays, 36500);
+        scheduledMinutes = card.intervalDays * 1440;
+        card.dueAt = now.add(Duration(days: card.intervalDays)).millisecondsSinceEpoch;
+        card.repetitions += 1;
       }
     }
 
@@ -197,7 +217,7 @@ class FlashcardService {
       await isar.flashcards.put(card);
     });
 
-    scheduledLabel = scheduledMinutes < 1440
+    final scheduledLabel = scheduledMinutes < 1440
         ? "$scheduledMinutes min"
         : "${(scheduledMinutes / 1440).round()} day(s)";
 
@@ -401,11 +421,13 @@ class FlashcardService {
       db = sqlite3.open(collectionPath, mode: OpenMode.readOnly);
 
       // 4) Deck names and creation day (crt).
-      final colRows = db.select('SELECT decks, crt FROM col LIMIT 1');
+      final colRows = db.select('SELECT decks, models, crt FROM col LIMIT 1');
       final colRow = colRows.isNotEmpty ? colRows.first : null;
       final decksJson = (colRow?['decks'] as String?) ?? '{}';
+      final modelsJson = (colRow?['models'] as String?) ?? '{}';
       final crtDays = (colRow?['crt'] as int?) ?? 0;
       final deckNameMap = <int, String>{};
+      final modelMap = <int, _AnkiModel>{};
       try {
         final parsed = jsonDecode(decksJson) as Map<String, dynamic>;
         for (final entry in parsed.entries) {
@@ -416,10 +438,20 @@ class FlashcardService {
           }
         }
       } catch (_) {}
+      try {
+        final parsed = jsonDecode(modelsJson) as Map<String, dynamic>;
+        for (final entry in parsed.entries) {
+          final mid = int.tryParse(entry.key);
+          if (mid != null) {
+            final model = _AnkiModel.fromJson(Map<String, dynamic>.from(entry.value));
+            modelMap[mid] = model;
+          }
+        }
+      } catch (_) {}
 
       // 5) Fetch cards (Basic only, ord=0 template).
       final rows = db.select('''
-        SELECT c.id, c.nid, c.did, c.due, c.ivl, c.factor, c.reps, c.lapses, c.type, n.flds
+        SELECT c.id, c.nid, c.did, c.due, c.ivl, c.factor, c.reps, c.lapses, c.type, n.flds, n.mid, c.ord
         FROM cards c
         JOIN notes n ON c.nid = n.id
         WHERE c.ord = 0
@@ -434,20 +466,34 @@ class FlashcardService {
       // 6) Create decks and import cards.
       for (final entry in cardsByDeck.entries) {
         final ankiDeckId = entry.key;
-        final deckName = deckNameMap[ankiDeckId] ??
-            p.basenameWithoutExtension(apkgPath);
+        final deckName = deckNameMap[ankiDeckId] ?? p.basenameWithoutExtension(apkgPath);
 
         final newDeckId = await createDeck(topicId, deckName);
         createdDeckIds.add(newDeckId);
 
         for (final row in entry.value) {
           final fields = (row['flds'] as String).split('\u001F');
-          String frontRaw = fields.isNotEmpty ? fields[0] : '';
+          final mid = row['mid'] as int?;
+          final model = mid != null ? modelMap[mid] : null;
+          final template = model?.templates.isNotEmpty == true ? model!.templates.first : null;
+
+          String frontRaw;
           String backRaw;
-          if (fields.length >= 2) {
-            backRaw = fields.sublist(1).join('\n\n');
+          if (template != null) {
+            frontRaw = _renderTemplate(template.qfmt, fields, model!.fieldNames);
+            final renderedFront = frontRaw;
+            backRaw = _renderTemplate(
+              template.afmt.replaceAll("{{FrontSide}}", renderedFront),
+              fields,
+              model.fieldNames,
+            );
           } else {
-            backRaw = fields.join('\n');
+            // Fallback: basic two-sided
+            final frontParts = <String>[];
+            if (fields.isNotEmpty) frontParts.add(fields[0]);
+            if (fields.length > 1) frontParts.add(fields[1]);
+            frontRaw = frontParts.join('\n\n');
+            backRaw = fields.length > 2 ? fields.sublist(2).join('\n\n') : (fields.length > 1 ? fields[1] : '');
           }
 
           final cleanedFront = _cleanField(frontRaw);
@@ -476,21 +522,23 @@ class FlashcardService {
           final mediaBack = await _extractMedia(backRaw, mediaMap, workDir);
 
           // Fallback if text is empty but media exists.
+          final hasFrontMedia = mediaFront.imagePath != null || mediaFront.audioPaths.isNotEmpty;
+          final hasBackMedia = mediaBack.imagePath != null || mediaBack.audioPaths.isNotEmpty;
           final finalFront = cleanedFront.isNotEmpty
               ? cleanedFront
-              : (mediaFront.imagePath != null || mediaFront.audioPath != null
-                  ? 'Media card'
-                  : frontRaw.trim());
-          final finalBack = cleanedBack.isNotEmpty ? cleanedBack : backRaw.trim();
+              : (hasFrontMedia ? 'Media card' : frontRaw.trim());
+          final finalBack = cleanedBack.isNotEmpty
+              ? cleanedBack
+              : (hasBackMedia ? 'Media card' : backRaw.trim());
 
           await createFlashcard(
             newDeckId,
             finalFront,
             finalBack,
             imagePath: mediaFront.imagePath ?? mediaBack.imagePath,
-            audioPath: mediaFront.audioPath ?? mediaBack.audioPath,
+            audioPath: _serializeAudioBundle(mediaFront, mediaBack),
             imageOnFront: mediaFront.imagePath != null,
-            audioOnFront: mediaFront.audioPath != null,
+            audioOnFront: mediaFront.audioPaths.isNotEmpty,
             lastReviewed: lastReviewed,
             dueAt: dueAt,
             intervalDays: intervalDays,
@@ -516,13 +564,14 @@ class FlashcardService {
     Directory workDir,
   ) async {
     String? imagePath;
-    String? audioPath;
+    final audioPaths = <String>[];
 
     // Sound: [sound:xxx.mp3]
     final soundMatches = RegExp(r'\[sound:([^\]]+)\]').allMatches(field);
-    if (soundMatches.isNotEmpty) {
-      final name = soundMatches.first.group(1)!;
-      audioPath = await _copyMediaFile(name, mediaMap, workDir);
+    for (final m in soundMatches) {
+      final name = m.group(1)!;
+      final copied = await _copyMediaFile(name, mediaMap, workDir);
+      if (copied != null) audioPaths.add(copied);
     }
 
     // Image: <img src="xxx.png">
@@ -533,13 +582,14 @@ class FlashcardService {
     }
 
     // Also handle <audio src="...">
-    final audioTag = RegExp(r'<audio[^>]*src="([^"]+)"').firstMatch(field);
-    if (audioTag != null && audioPath == null) {
-      final name = audioTag.group(1)!;
-      audioPath = await _copyMediaFile(name, mediaMap, workDir);
+    final audioTagMatches = RegExp(r'<audio[^>]*src="([^"]+)"').allMatches(field);
+    for (final m in audioTagMatches) {
+      final name = m.group(1)!;
+      final copied = await _copyMediaFile(name, mediaMap, workDir);
+      if (copied != null) audioPaths.add(copied);
     }
 
-    return _ImportedMedia(imagePath: imagePath, audioPath: audioPath);
+    return _ImportedMedia(imagePath: imagePath, audioPaths: audioPaths);
   }
 
   Future<String?> _copyMediaFile(
@@ -581,20 +631,25 @@ class FlashcardService {
     }
   }
 
-  String _stripMediaMarkup(String text) {
+  String _cleanField(String text) {
     var t = text;
     t = t.replaceAll(RegExp(r'<br\\s*/?>', caseSensitive: false), '\n');
     t = t.replaceAll(RegExp(r'</div>', caseSensitive: false), '\n');
     t = t.replaceAll(RegExp(r'\[sound:[^\]]+\]'), '');
-    t = t.replaceAllMapped(RegExp(r'<img[^>]*src="([^"]+)"[^>]*>', caseSensitive: false),
-        (m) => ' [img:${m.group(1)}] ');
     t = t.replaceAll(RegExp(r'<audio[^>]*src="([^"]+)"[^>]*>[^<]*</audio>', caseSensitive: false), '');
     t = t.replaceAll(RegExp(r'<[^>]+>'), '');
     return t.trim();
   }
 
-  String _cleanField(String text) {
-    return _stripMediaMarkup(text);
+  String _renderTemplate(String template, List<String> fieldValues, List<String> fieldNames) {
+    var rendered = template;
+    for (var i = 0; i < fieldNames.length && i < fieldValues.length; i++) {
+      final name = fieldNames[i];
+      rendered = rendered.replaceAll('{{$name}}', fieldValues[i]);
+    }
+    // Strip other tags like {{FrontSide}}
+    rendered = rendered.replaceAll(RegExp(r'\{\{[^}]+\}\}'), '');
+    return rendered;
   }
 }
 
@@ -620,12 +675,48 @@ class FlashcardReviewOutcome {
 
 class _ImportedMedia {
   final String? imagePath;
-  final String? audioPath;
+  final List<String> audioPaths;
 
-  _ImportedMedia({this.imagePath, this.audioPath});
+  _ImportedMedia({this.imagePath, this.audioPaths = const []});
 }
 
+String _serializeAudioBundle(_ImportedMedia front, _ImportedMedia back) {
+  if (front.audioPaths.isEmpty && back.audioPaths.isEmpty) return '';
+  final payload = {
+    'front': front.audioPaths,
+    'back': back.audioPaths,
+  };
+  return jsonEncode(payload);
+}
 
+class _AnkiModel {
+  final List<String> fieldNames;
+  final List<_AnkiTemplate> templates;
 
+  _AnkiModel({required this.fieldNames, required this.templates});
 
+  factory _AnkiModel.fromJson(Map<String, dynamic> json) {
+    final fieldsRaw = (json['flds'] as List<dynamic>? ?? [])
+        .map((f) => (f as Map)['name'] as String? ?? '')
+        .where((n) => n.isNotEmpty)
+        .toList();
+    final tmplsRaw = (json['tmpls'] as List<dynamic>? ?? [])
+        .map((t) => _AnkiTemplate.fromJson(Map<String, dynamic>.from(t)))
+        .toList();
+    return _AnkiModel(fieldNames: fieldsRaw, templates: tmplsRaw);
+  }
+}
 
+class _AnkiTemplate {
+  final String qfmt;
+  final String afmt;
+
+  _AnkiTemplate({required this.qfmt, required this.afmt});
+
+  factory _AnkiTemplate.fromJson(Map<String, dynamic> json) {
+    return _AnkiTemplate(
+      qfmt: (json['qfmt'] as String?) ?? '',
+      afmt: (json['afmt'] as String?) ?? '',
+    );
+  }
+}

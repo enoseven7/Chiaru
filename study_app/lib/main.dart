@@ -14,6 +14,7 @@ import 'models/quiz.dart';
 import 'models/quiz_question.dart';
 import 'models/teach_settings.dart';
 import 'models/task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pages/flashcard_home_page.dart';
 import 'pages/notes_workspace_page.dart';
@@ -290,6 +291,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   AppSection currentSection = AppSection.home;
   bool _onboardingShown = false;
+  bool _onboardingLoaded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -356,6 +358,9 @@ class _MainScreenState extends State<MainScreen> {
 
   NavigationRail _buildRail(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width > 1180;
+    final brightness = Theme.of(context).brightness;
+    final logoAsset =
+        brightness == Brightness.dark ? 'assets/0.5x/White_Transparent@0.5x.png' : 'assets/0.5x/Black Transparent@0.5x.png';
     final destinations = [
       (AppSection.home, Icons.dashboard_outlined, 'Home'),
       (AppSection.planner, Icons.event_note_outlined, 'Planner'),
@@ -376,16 +381,30 @@ class _MainScreenState extends State<MainScreen> {
       leading: Padding(
         padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
         child: Column(
-          children: [
+          children: 
+          [
             Container(
-              padding: const EdgeInsets.all(10),
+              width: 40,
+              height: 40,
+              padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
+                color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Theme.of(context).colorScheme.outline),
               ),
-              child: Icon(Icons.school_outlined, color: Theme.of(context).colorScheme.primary),
+              child: Image.asset(
+                logoAsset,
+                fit: BoxFit.contain,
+              ),
             ),
-            const SizedBox(height: 10),
+            if (isWide)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Text(
+                  'Chiaru',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
           ],
         ),
       ),
@@ -415,20 +434,12 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildTopBar(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final brightness = Theme.of(context).brightness;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
       child: Row(
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Chiaru', style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              Text(
-                'Study hub • focus mode ready',
-                style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-              ),
-            ],
-          ),
+          
           const SizedBox(width: 16),
           Expanded(
             child: Container(
@@ -502,12 +513,28 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showOnboarding());
+    _initOnboarding();
+  }
+
+  Future<void> _initOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    final alreadySeen = prefs.getBool('onboarding_seen') ?? false;
+    setState(() {
+      _onboardingShown = alreadySeen;
+      _onboardingLoaded = true;
+    });
+    if (!alreadySeen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showOnboarding());
+    }
   }
 
   void _showOnboarding({bool force = false}) {
+    if (!_onboardingLoaded) return;
     if (_onboardingShown && !force) return;
-    _onboardingShown = true;
+    if (!_onboardingShown) {
+      _onboardingShown = true;
+      SharedPreferences.getInstance().then((prefs) => prefs.setBool('onboarding_seen', true));
+    }
     final steps = [
       (
         icon: Icons.dashboard_customize,

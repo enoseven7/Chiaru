@@ -1,10 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:signature/signature.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../models/note.dart';
 import '../services/note_service.dart';
@@ -24,18 +23,19 @@ class NoteEditorArea extends StatefulWidget {
 }
 
 class _NoteEditorAreaState extends State<NoteEditorArea> {
-  QuillController? _quillController;
+  quill.QuillController? _quillController;
   List<Note> _notes = [];
   Note? _activeNote;
   bool _isLoading = false;
   double _notesPanelWidth = 260;
   bool _notesCollapsed = false;
-  bool _sketchCollapsed = true;
-  double _sketchHeight = 230;
-  late SignatureController _signatureController;
+
+  CanvasDocumentData _canvas = CanvasDocumentData.empty();
   Color _penColor = Colors.blue;
+  double _penWidth = 3.5;
   bool _usingEraser = false;
-  bool _hasSignatureController = false;
+  bool _textMode = false;
+  bool _canvasView = true;
   final List<Color> _penPalette = const [
     Colors.blue,
     Colors.red,
@@ -43,14 +43,14 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     Colors.orange,
     Colors.purple,
     Colors.black,
+    Colors.white,
   ];
 
   @override
   void initState() {
     super.initState();
-    _signatureController = _createSignatureController();
-    _hasSignatureController = true;
-    _initControllerForNote(null);
+    _initCanvasForNote(null);
+    _initRichForNote(null);
     _loadNotesForTopic();
   }
 
@@ -65,62 +65,90 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     }
   }
 
-  SignatureController _createSignatureController({
-    List<Point>? points,
-    Color? color,
-    double? strokeWidth,
-  }) {
-    final existingPoints = points ??
-        (_hasSignatureController ? List<Point>.from(_signatureController.points) : <Point>[]);
-    return SignatureController(
-      penStrokeWidth: strokeWidth ?? 3,
-      penColor: color ?? (_usingEraser ? Colors.white : _penColor),
-      exportBackgroundColor: Colors.white,
-      points: existingPoints,
-    );
-  }
-
-  void _updateSignatureController({Color? color, bool? useEraser}) {
-    final bool nextEraser = useEraser ?? _usingEraser;
-    final Color newPenColor = nextEraser ? Colors.white : (color ?? _penColor);
-    final points =
-        _hasSignatureController ? List<Point>.from(_signatureController.points) : <Point>[];
-    if (_hasSignatureController) {
-      _signatureController.dispose();
-    }
-    setState(() {
-      if (color != null) _penColor = color;
-      _usingEraser = nextEraser;
-      _signatureController = _createSignatureController(points: points, color: newPenColor);
-      _hasSignatureController = true;
-    });
-  }
-
   @override
   void dispose() {
     () async {
       await _saveCurrentNote();
     }();
-    _signatureController.dispose();
     _quillController?.dispose();
     super.dispose();
   }
 
-  Document _documentFromRaw(String? raw) {
-    if (raw == null || raw.isEmpty) return Document();
+  CanvasDocumentData _canvasFromRaw(String? raw) {
+    if (raw == null || raw.isEmpty) return CanvasDocumentData.empty();
     try {
-      return Document.fromJson(jsonDecode(raw));
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic> && decoded['type'] == CanvasDocumentData.storageType) {
+        return CanvasDocumentData.fromJson(decoded);
+      }
+      try {
+        final legacyDoc = quill.Document.fromJson(decoded as List);
+        final text = legacyDoc.toPlainText().trim();
+        return CanvasDocumentData.fromPlainText(text);
+      } catch (_) {
+        if (decoded is String) {
+          return CanvasDocumentData.fromPlainText(decoded);
+        }
+      }
     } catch (_) {
-      return Document();
+      return CanvasDocumentData.fromPlainText(raw);
+    }
+    return CanvasDocumentData.empty();
+  }
+
+  NoteContentBundle _bundleFromRaw(String? raw) {
+    if (raw == null || raw.isEmpty) return NoteContentBundle.empty();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic> && decoded['type'] == NoteContentBundle.storageType) {
+        return NoteContentBundle.fromJson(decoded);
+      }
+      if (decoded is Map<String, dynamic> && decoded['type'] == CanvasDocumentData.storageType) {
+        return NoteContentBundle(
+          canvas: CanvasDocumentData.fromJson(decoded),
+          rich: "",
+        );
+      }
+      if (decoded is List<dynamic>) {
+        // old quill delta
+        return NoteContentBundle(canvas: CanvasDocumentData.empty(), rich: jsonEncode(decoded));
+      }
+      if (decoded is String) {
+        return NoteContentBundle(canvas: CanvasDocumentData.empty(), rich: decoded);
+      }
+    } catch (_) {
+      return NoteContentBundle(canvas: CanvasDocumentData.empty(), rich: raw);
+    }
+    return NoteContentBundle.empty();
+  }
+
+  void _initCanvasForNote(Note? note) {
+    _canvas = _canvasFromRaw(note?.content);
+  }
+
+  void _initRichForNote(Note? note) {
+    _quillController?.dispose();
+    final bundle = _bundleFromRaw(note?.content);
+    try {
+      final doc = bundle.rich.isEmpty
+          ? quill.Document()
+          : quill.Document.fromJson(jsonDecode(bundle.rich) as List<dynamic>);
+      _quillController = quill.QuillController(
+        document: doc,
+        selection: const TextSelection.collapsed(offset: 0),
+      );
+    } catch (_) {
+      _quillController = quill.QuillController.basic();
     }
   }
 
-  void _initControllerForNote(Note? note) {
-    _quillController?.dispose();
-    _quillController = QuillController(
-      document: _documentFromRaw(note?.content),
-      selection: const TextSelection.collapsed(offset: 0),
-    );
+  String _currentRichJson() {
+    if (_quillController == null) return "";
+    try {
+      return jsonEncode(_quillController!.document.toDelta().toJson());
+    } catch (_) {
+      return "";
+    }
   }
 
   Future<void> _loadNotesForTopic({bool selectNewest = false}) async {
@@ -129,10 +157,10 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       _isLoading = true;
       _notes = [];
       _activeNote = null;
+      _canvas = CanvasDocumentData.empty();
     });
 
     if (topicId == 0) {
-      _initControllerForNote(null);
       setState(() {
         _isLoading = false;
       });
@@ -160,17 +188,21 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       _notes = notes;
       _activeNote = nextNote;
       _isLoading = false;
+      final bundle = _bundleFromRaw(nextNote?.content);
+      _canvas = bundle.canvas;
+      _initRichForNote(nextNote);
     });
-    _initControllerForNote(_activeNote);
   }
 
   Future<void> _saveCurrentNote() async {
-    if (_activeNote == null || _quillController == null) return;
+    if (_activeNote == null) return;
 
     final updatedContent = jsonEncode(
-      _quillController!.document.toDelta().toJson(),
+      NoteContentBundle(
+        canvas: _canvas,
+        rich: _currentRichJson(),
+      ).toJson(),
     );
-
     if (_activeNote!.content == updatedContent) return;
 
     _activeNote!.content = updatedContent;
@@ -198,44 +230,27 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     await _saveCurrentNote();
     setState(() {
       _activeNote = note;
+      final bundle = _bundleFromRaw(note.content);
+      _canvas = bundle.canvas;
+      _initRichForNote(note);
     });
-    _initControllerForNote(note);
   }
 
   String _notePreview(Note note) {
-    if (note.content.isEmpty) return "(Empty note)";
     try {
-      final preview = Document.fromJson(
-        jsonDecode(note.content),
-      ).toPlainText().trim();
-      if (preview.isEmpty) return "(Empty note)";
-      return preview;
+      final bundle = _bundleFromRaw(note.content);
+      final canvasText = bundle.canvas.previewText;
+      if (canvasText.isNotEmpty) return canvasText;
+      if (bundle.rich.isNotEmpty) {
+        try {
+          return quill.Document.fromJson(jsonDecode(bundle.rich) as List<dynamic>)
+              .toPlainText()
+              .trim();
+        } catch (_) {}
+      }
+      return "(Sketch note)";
     } catch (_) {
       return "(Invalid note)";
-    }
-  }
-
-  Future<void> _insertSketch(QuillController controller) async {
-    if (_signatureController.isEmpty) return;
-    try {
-      final Uint8List? png = await _signatureController.toPngBytes();
-      if (png == null) return;
-      final dataUri = 'data:image/png;base64,${base64Encode(png)}';
-
-      final sel = controller.selection;
-      final docLength = controller.document.length;
-      final index = (sel.baseOffset < 0 || sel.baseOffset > docLength) ? docLength : sel.baseOffset;
-      controller.replaceText(
-        index,
-        0,
-        BlockEmbed.image(dataUri),
-        TextSelection.collapsed(offset: index + 1),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to insert sketch: $e')),
-      );
     }
   }
 
@@ -322,7 +337,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     );
   }
 
-  Widget _buildEditor(QuillController controller) {
+  Widget _buildEditor() {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -371,157 +386,104 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          _SketchPad(
-            controller: _signatureController,
-            collapsed: _sketchCollapsed,
-            height: _sketchHeight,
-            penColor: _penColor,
-            palette: _penPalette,
-            onToggle: () => setState(() => _sketchCollapsed = !_sketchCollapsed),
-            onClear: () => _signatureController.clear(),
-            onEraseToggle: () => _updateSignatureController(useEraser: !_usingEraser),
-            onColorSelected: (c) => _updateSignatureController(color: c, useEraser: false),
-            onResize: (delta) {
-              setState(() {
-                _sketchCollapsed = false;
-                _sketchHeight = (_sketchHeight + delta).clamp(160, 420);
-              });
-            },
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text("Canvas"), icon: Icon(Icons.gesture)),
+                  ButtonSegment(
+                    value: false,
+                    label: Text("Rich text"),
+                    icon: Icon(Icons.notes_outlined),
+                  ),
+                ],
+                selected: {_canvasView},
+                onSelectionChanged: (set) => setState(() => _canvasView = set.first),
+              ),
+              const Spacer(),
+              if (!_canvasView && _quillController != null)
+                IconButton(
+                  tooltip: "Clear rich text",
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () {
+                    setState(() {
+                      _quillController = quill.QuillController.basic();
+                    });
+                  },
+                ),
+            ],
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minWidth: MediaQuery.of(context).size.width - 64,
-                  maxWidth: MediaQuery.of(context).size.width - 64,
-                ),
-                child: QuillSimpleToolbar(
-                  controller: controller,
-                  config: QuillSimpleToolbarConfig(
-                    multiRowsDisplay: false,
-                    toolbarSectionSpacing: 4,
-                    showDividers: false,
-                    showFontSize: true,
-                    customButtons: [
-                      QuillToolbarCustomButtonOptions(
-                        icon: const Icon(Icons.text_fields),
-                        tooltip: 'Custom size',
-                        onPressed: () async {
-                          final textCtrl = TextEditingController(text: '16');
-                          final size = await showDialog<double>(
-                            context: context,
-                            builder: (_) => AlertDialog(
-                              title: const Text('Custom font size (px)'),
-                              content: TextField(
-                                controller: textCtrl,
-                                keyboardType: TextInputType.number,
-                                autofocus: true,
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('Cancel'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop<double>(
-                                    context,
-                                    double.tryParse(textCtrl.text),
-                                  ),
-                                  child: const Text('Apply'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (size != null) {
-                            controller.formatSelection(
-                              Attribute.fromKeyValue(
-                                Attribute.size.key,
-                                size.toStringAsFixed(0),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ],
-                    buttonOptions: QuillSimpleToolbarButtonOptions(
-                      fontSize: const QuillToolbarFontSizeButtonOptions(
-                        items: {
-                          '12 px': '12',
-                          '14 px': '14',
-                          '16 px': '16',
-                          '18 px': '18',
-                          '24 px': '24',
-                          '32 px': '32',
-                        },
-                        defaultDisplayText: 'Size',
-                      ),
-                    ),
-                    iconTheme: QuillIconTheme(
-                      iconButtonUnselectedData: IconButtonData(
-                        color: colors.onSurfaceVariant,
-                        style: ButtonStyle(
-                          backgroundColor: WidgetStatePropertyAll(
-                            colors.surfaceContainerHighest,
-                          ),
-                          shape: WidgetStatePropertyAll(
-                            RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                          ),
-                          padding: const WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                          ),
-                        ),
-                      ),
-                      iconButtonSelectedData: IconButtonData(
-                        color: colors.primary,
-                        style: ButtonStyle(
-                          backgroundColor: WidgetStatePropertyAll(
-                            colors.primary.withOpacity(0.14),
-                          ),
-                          shape: WidgetStatePropertyAll(
-                            RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                          ),
-                          padding: const WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                          ),
-                        ),
+          if (_canvasView)
+            Expanded(
+              child: Column(
+                children: [
+                  _CanvasToolbar(
+                    penColor: _penColor,
+                    penWidth: _penWidth,
+                    erasing: _usingEraser,
+                    textMode: _textMode,
+                    palette: _penPalette,
+                    onColorSelected: (c) => setState(() {
+                      _usingEraser = false;
+                      _penColor = c;
+                    }),
+                    onWidthChanged: (v) => setState(() => _penWidth = v),
+                    onEraserToggled: () => setState(() => _usingEraser = !_usingEraser),
+                    onTextModeToggled: () => setState(() => _textMode = !_textMode),
+                    onUndo: () => setState(() => _canvas = _canvas.removeLastStroke()),
+                    onClearAll: () => setState(() => _canvas = CanvasDocumentData.empty()),
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: Focus(
+                      child: _CanvasBoard(
+                        key: ValueKey(_activeNote?.id),
+                        document: _canvas,
+                        penColor: _penColor,
+                        strokeWidth: _penWidth,
+                        erasing: _usingEraser,
+                        textMode: _textMode,
+                        textPalette: _penPalette,
+                        onChanged: (doc) => setState(() => _canvas = doc),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: Focus(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHighest.withOpacity(0.6),
-                  border: Border.all(color: colors.onSurface.withOpacity(0.12)),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: QuillEditor.basic(
-                  controller: controller,
-                  config: QuillEditorConfig(
-                    embedBuilders: const [_ImageEmbedBuilder()],
-                    scrollable: true,
-                    autoFocus: false,
-                    expands: true,
-                    padding: const EdgeInsets.all(12),
-                    placeholder: 'Start writing your note here...',
+            )
+          else if (_quillController != null)
+            Expanded(
+              child: Column(
+                children: [
+                  quill.QuillSimpleToolbar(
+                    controller: _quillController!,
+                    config: const quill.QuillSimpleToolbarConfig(
+                      multiRowsDisplay: false,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: colors.surfaceVariant.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: colors.onSurface.withOpacity(0.12)),
+                      ),
+                      child: quill.QuillEditor.basic(
+                        config: const quill.QuillEditorConfig(
+                          padding: EdgeInsets.all(12),
+                        ),
+                        controller: _quillController!,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ),
+            )
+          else
+            const Expanded(child: Center(child: Text("Rich text not available."))),
         ],
       ),
     );
@@ -529,10 +491,6 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = _quillController;
-    final colors = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Row(
@@ -557,21 +515,22 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                   )
                 : Column(
                     children: [
+                      // note list header
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: colors.surfaceContainerHighest,
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: colors.onSurface.withOpacity(0.08),
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.08),
                           ),
                         ),
                         child: Row(
                           children: [
-                            Text("Notes", style: textTheme.labelLarge),
+                            Text("Notes", style: Theme.of(context).textTheme.labelLarge),
                             const Spacer(),
                             TextButton.icon(
                               style: TextButton.styleFrom(
@@ -592,10 +551,10 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                       Expanded(
                         child: Container(
                           decoration: BoxDecoration(
-                            color: colors.surfaceContainerHighest,
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: colors.onSurface.withOpacity(0.08),
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.08),
                             ),
                           ),
                           child: _buildNotesList(),
@@ -606,9 +565,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
           ),
           const SizedBox(width: 16),
           Expanded(
-            child: controller == null
-                ? const SizedBox.shrink()
-                : _buildEditor(controller),
+            child: _buildEditor(),
           ),
         ],
       ),
@@ -729,108 +686,62 @@ class _CollapsedRail extends StatelessWidget {
   }
 }
 
-class _ImageEmbedBuilder extends EmbedBuilder {
-  const _ImageEmbedBuilder();
+// ==== canvas controls + models added below ====
 
-  @override
-  String get key => BlockEmbed.imageType;
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
-    final data = embedContext.node.value.data;
-    final source = data is String ? data : '';
-
-    Widget image;
-    if (source.startsWith('data:image')) {
-      final idx = source.indexOf(',');
-      final base64Str = idx != -1 ? source.substring(idx + 1) : source;
-      image = Image.memory(
-        base64Decode(base64Str),
-        fit: BoxFit.contain,
-      );
-    } else if (source.startsWith('file://')) {
-      image = Image.file(
-        File(Uri.parse(source).toFilePath()),
-        fit: BoxFit.contain,
-      );
-    } else if (source.startsWith('/')) {
-      image = Image.file(
-        File(source),
-        fit: BoxFit.contain,
-      );
-    } else {
-      image = Image.network(
-        source,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 420, maxWidth: 1200),
-        child: image,
-      ),
-    );
-  }
-}
-
-class _SketchPad extends StatelessWidget {
-  final SignatureController controller;
-  final bool collapsed;
-  final double height;
+class _CanvasToolbar extends StatelessWidget {
   final Color penColor;
+  final double penWidth;
+  final bool erasing;
+  final bool textMode;
   final List<Color> palette;
-  final VoidCallback onToggle;
-  final VoidCallback onClear;
-  final VoidCallback onEraseToggle;
   final ValueChanged<Color> onColorSelected;
-  final ValueChanged<double> onResize;
+  final ValueChanged<double> onWidthChanged;
+  final VoidCallback onEraserToggled;
+  final VoidCallback onTextModeToggled;
+  final VoidCallback onUndo;
+  final VoidCallback onClearAll;
 
-  const _SketchPad({
-    required this.controller,
-    required this.collapsed,
-    required this.height,
+  const _CanvasToolbar({
     required this.penColor,
+    required this.penWidth,
+    required this.erasing,
+    required this.textMode,
     required this.palette,
-    required this.onToggle,
-    required this.onClear,
-    required this.onEraseToggle,
     required this.onColorSelected,
-    required this.onResize,
+    required this.onWidthChanged,
+    required this.onEraserToggled,
+    required this.onTextModeToggled,
+    required this.onUndo,
+    required this.onClearAll,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutCubic,
-      height: collapsed ? 46 : height,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.onSurface.withOpacity(0.08)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text("Sketch pad", style: textTheme.bodyMedium),
-              const SizedBox(width: 10),
+              Text("Canvas tools", style: textTheme.bodyMedium),
+              const SizedBox(width: 12),
               Wrap(
-                spacing: 6,
+                spacing: 8,
                 children: palette
                     .map(
                       (c) => GestureDetector(
                         onTap: () => onColorSelected(c),
                         child: Container(
-                          width: 18,
-                          height: 18,
+                          width: 22,
+                          height: 22,
                           decoration: BoxDecoration(
                             color: c,
                             shape: BoxShape.circle,
@@ -845,66 +756,827 @@ class _SketchPad extends StatelessWidget {
                     .toList(),
               ),
               const Spacer(),
-              IconButton(
-                tooltip: collapsed ? "Show sketch pad" : "Hide sketch pad",
-                icon: Icon(collapsed ? Icons.edit : Icons.expand_less),
-                onPressed: onToggle,
+              FilledButton.tonalIcon(
+                onPressed: onEraserToggled,
+                icon: Icon(erasing ? Icons.brush : Icons.auto_fix_high_outlined, size: 18),
+                label: Text(erasing ? "Pen" : "Eraser"),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonalIcon(
+                onPressed: onTextModeToggled,
+                icon: Icon(textMode ? Icons.text_fields : Icons.add_comment_outlined, size: 18),
+                label: Text(textMode ? "Text mode" : "Add text"),
               ),
             ],
           ),
-          if (!collapsed) ...[
-            Expanded(
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colors.onSurface.withOpacity(0.1)),
-                ),
-                clipBehavior: Clip.hardEdge,
-                child: Signature(
-                  controller: controller,
-                  backgroundColor: Colors.white,
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text("Width"),
+              Expanded(
+                child: Slider(
+                  value: penWidth,
+                  min: 1.0,
+                  max: 12.0,
+                  onChanged: onWidthChanged,
                 ),
               ),
-            ),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: onClear,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text("Clear"),
-                ),
-                TextButton.icon(
-                  onPressed: onEraseToggle,
-                  icon: const Icon(Icons.auto_fix_normal_outlined),
-                  label: const Text("Eraser"),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            MouseRegion(
-              cursor: SystemMouseCursors.resizeUpDown,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onVerticalDragUpdate: (details) => onResize(details.delta.dy),
-                child: Container(
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Container(
-                    width: 48,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colors.onSurface.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(4),
+              const SizedBox(width: 6),
+              Text("${penWidth.toStringAsFixed(1)} px"),
+              const Spacer(),
+              IconButton(
+                tooltip: "Undo stroke",
+                onPressed: onUndo,
+                icon: const Icon(Icons.undo_rounded),
+              ),
+              TextButton.icon(
+                onPressed: onClearAll,
+                icon: const Icon(Icons.layers_clear_outlined),
+                label: const Text("Clear"),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CanvasBoard extends StatefulWidget {
+  final CanvasDocumentData document;
+  final Color penColor;
+  final double strokeWidth;
+  final bool erasing;
+  final bool textMode;
+  final List<Color> textPalette;
+  final ValueChanged<CanvasDocumentData> onChanged;
+
+  const _CanvasBoard({
+    super.key,
+    required this.document,
+    required this.penColor,
+    required this.strokeWidth,
+    required this.erasing,
+    required this.textMode,
+    required this.textPalette,
+    required this.onChanged,
+  });
+
+  @override
+  State<_CanvasBoard> createState() => _CanvasBoardState();
+}
+
+class _CanvasBoardState extends State<_CanvasBoard> {
+  CanvasStroke? _activeStroke;
+  final Map<String, TextEditingController> _controllers = {};
+  final Map<String, FocusNode> _focusNodes = {};
+  String? _draggingId;
+  Offset _dragStartBoxPos = Offset.zero;
+  Offset _dragAccum = Offset.zero;
+  String? _selectedBoxId;
+
+  @override
+  void didUpdateWidget(covariant _CanvasBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    for (final box in widget.document.textBoxes) {
+      _controllers.putIfAbsent(box.id, () => TextEditingController(text: box.text));
+      _focusNodes.putIfAbsent(box.id, () => FocusNode());
+      if (_controllers[box.id]!.text != box.text && !_focusNodes[box.id]!.hasFocus) {
+        _controllers[box.id]!.text = box.text;
+      }
+    }
+    final removed = _controllers.keys.where(
+      (id) => widget.document.textBoxes.every((b) => b.id != id),
+    );
+    for (final id in removed.toList()) {
+      _controllers.remove(id)?.dispose();
+      _focusNodes.remove(id)?.dispose();
+    }
+    if (_selectedBoxId != null && widget.document.boxById(_selectedBoxId!) == null) {
+      _selectedBoxId = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    for (final f in _focusNodes.values) {
+      f.dispose();
+    }
+    super.dispose();
+  }
+
+  void _updateDoc(CanvasDocumentData next) {
+    widget.onChanged(next);
+  }
+
+  void _startStroke(PointerDownEvent event, Size size) {
+    if (widget.textMode) return;
+    final norm = _normalize(event.localPosition, size);
+    if (widget.erasing) {
+      _activeStroke = null;
+      _eraseAt(norm);
+      return;
+    }
+    final stroke = CanvasStroke(
+      color: widget.erasing ? Colors.white : widget.penColor,
+      width: widget.strokeWidth,
+      points: [CanvasPoint(norm.dx, norm.dy, _pressure(event))],
+    );
+    setState(() => _activeStroke = stroke);
+  }
+
+  void _extendStroke(PointerMoveEvent event, Size size) {
+    if (widget.erasing) {
+      _eraseAt(_normalize(event.localPosition, size));
+      return;
+    }
+    if (_activeStroke == null || widget.textMode) return;
+    final norm = _normalize(event.localPosition, size);
+    setState(() => _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _pressure(event))));
+  }
+
+  void _endStroke() {
+    if (_activeStroke == null) return;
+    if (_activeStroke!.points.length > 1) {
+      _updateDoc(widget.document.addStroke(_activeStroke!));
+    }
+    setState(() => _activeStroke = null);
+  }
+
+  void _eraseAt(Offset normPoint) {
+    const radius = 0.02; // normalized radius for hit-testing
+    final next = widget.document.strokes.where((stroke) {
+      return stroke.points.every((p) {
+        final dx = p.x - normPoint.dx;
+        final dy = p.y - normPoint.dy;
+        return (dx * dx + dy * dy) > radius * radius;
+      });
+    }).toList();
+    if (next.length != widget.document.strokes.length) {
+      _updateDoc(
+        CanvasDocumentData(
+          strokes: next,
+          textBoxes: widget.document.textBoxes,
+        ),
+      );
+    }
+  }
+
+  void _addTextBox(Offset position, Size size) {
+    final norm = _normalize(position, size);
+    const defaultWidth = 0.32;
+    const defaultHeight = 0.16;
+    _updateDoc(
+      widget.document.addTextBox(
+        CanvasTextBox(
+          id: _id(),
+          x: norm.dx.clamp(0.0, 1.0 - defaultWidth),
+          y: norm.dy.clamp(0.0, 1.0 - defaultHeight),
+          width: defaultWidth,
+          height: defaultHeight,
+          text: "",
+          fontSize: 16,
+          color: Colors.black.value,
+        ),
+      ),
+    );
+  }
+
+  void _deleteTextBox(String id) {
+    _updateDoc(widget.document.removeTextBox(id));
+    setState(() {
+      if (_selectedBoxId == id) _selectedBoxId = null;
+      if (_draggingId == id) _draggingId = null;
+    });
+  }
+
+  void _onTextChanged(String id, String value) {
+    _updateDoc(widget.document.updateTextBox(id, text: value));
+  }
+
+  void _startDragBox(String id, Size size) {
+    final box = widget.document.boxById(id);
+    if (box == null) return;
+    _draggingId = id;
+    _dragStartBoxPos = Offset(box.x, box.y);
+    _dragAccum = Offset.zero;
+    _selectedBoxId = id;
+  }
+
+  void _onDragBox(String id, Offset delta, Size size) {
+    if (_draggingId != id) return;
+    _dragAccum += Offset(delta.dx / size.width, delta.dy / size.height);
+    final startX = _dragStartBoxPos.dx;
+    final startY = _dragStartBoxPos.dy;
+    final box = widget.document.boxById(id);
+    final width = box?.width ?? 0.2;
+    final height = box?.height ?? 0.1;
+    final nextX = (startX + _dragAccum.dx).clamp(0.0, 1.0 - width);
+    final nextY = (startY + _dragAccum.dy).clamp(0.0, 1.0 - height);
+    _updateDoc(widget.document.updateTextBox(
+      id,
+      x: nextX,
+      y: nextY,
+    ));
+  }
+
+  Offset _normalize(Offset pos, Size size) {
+    final clamped = Offset(
+      pos.dx.clamp(0, size.width),
+      pos.dy.clamp(0, size.height),
+    );
+    return Offset(clamped.dx / size.width, clamped.dy / size.height);
+  }
+
+  double _pressure(PointerEvent event) {
+    final minP = event.pressureMin;
+    final maxP = event.pressureMax;
+    final p = event.pressure;
+    if (maxP - minP <= 0.01) return 1.0;
+    return ((p - minP) / (maxP - minP)).clamp(0.35, 1.2);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: colors.surfaceVariant.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: colors.onSurface.withOpacity(0.08)),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Listener(
+                  onPointerDown: (e) => _startStroke(e, size),
+                  onPointerMove: (e) => _extendStroke(e, size),
+                  onPointerUp: (_) => _endStroke(),
+                  onPointerCancel: (_) => _endStroke(),
+                  child: GestureDetector(
+                    onDoubleTapDown: (details) {
+                      _addTextBox(details.localPosition, size);
+                    },
+                    child: CustomPaint(
+                      painter: _CanvasPainter(
+                        strokes: [
+                          ...widget.document.strokes,
+                          if (_activeStroke != null) _activeStroke!,
+                        ],
+                      ),
+                      foregroundPainter: _CanvasGridPainter(colors.onSurface.withOpacity(0.06)),
+                      child: Container(),
                     ),
                   ),
                 ),
               ),
             ),
+            ...widget.document.textBoxes.map(
+              (box) {
+                final controller = _controllers[box.id] ?? TextEditingController(text: box.text);
+                final focus = _focusNodes[box.id] ?? FocusNode();
+                final boxSize = Size(box.width * size.width, box.height * size.height);
+                return Positioned(
+                  left: box.x * size.width,
+                  top: box.y * size.height,
+                  width: boxSize.width,
+                  height: boxSize.height,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color:
+                            _draggingId == box.id ? colors.primary : colors.onSurface.withOpacity(0.14),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          blurRadius: 8,
+                          color: colors.shadow.withOpacity(0.12),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (_) => setState(() {
+                            _startDragBox(box.id, size);
+                          }),
+                          onPanUpdate: (details) => _onDragBox(box.id, details.delta, size),
+                          onPanEnd: (_) => setState(() => _draggingId = null),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            child: Row(
+                              children: [
+                                Icon(Icons.drag_indicator, size: 14, color: colors.onSurfaceVariant),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "Text",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const Spacer(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: TextField(
+                              controller: controller,
+                              focusNode: focus,
+                              maxLines: null,
+                              decoration: const InputDecoration.collapsed(hintText: "Text"),
+                              style: TextStyle(
+                                fontSize: box.fontSize,
+                                color: Color(box.color),
+                              ),
+                              onTap: () => setState(() => _selectedBoxId = box.id),
+                              onChanged: (v) => _onTextChanged(box.id, v),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (_selectedBoxId != null)
+              Builder(
+                builder: (_) {
+                  final box = widget.document.boxById(_selectedBoxId!);
+                  if (box == null) return const SizedBox.shrink();
+                  final toolbarWidth = 220.0;
+                  final left = box.x * size.width;
+                  final top = (box.y * size.height) - 52;
+                  final clampedLeft = left.clamp(6.0, size.width - toolbarWidth - 6.0);
+                  final clampedTop = top.clamp(6.0, size.height - 56.0);
+                  return Positioned(
+                    left: clampedLeft,
+                    top: clampedTop,
+                    child: Container(
+                      width: toolbarWidth,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: colors.surface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: colors.onSurface.withOpacity(0.12)),
+                        boxShadow: [
+                          BoxShadow(
+                            blurRadius: 8,
+                            color: colors.shadow.withOpacity(0.16),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              const Text("Text color", style: TextStyle(fontSize: 12)),
+                              const Spacer(),
+                              IconButton(
+                                tooltip: "Delete box",
+                                icon: const Icon(Icons.delete_outline, size: 16),
+                                onPressed: () => _deleteTextBox(box.id),
+                              ),
+                              IconButton(
+                                tooltip: "Close toolbar",
+                                icon: const Icon(Icons.close, size: 16),
+                                onPressed: () => setState(() => _selectedBoxId = null),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 6,
+                            children: widget.textPalette
+                                .map(
+                                  (c) => GestureDetector(
+                                    onTap: () {
+                                      _updateDoc(widget.document.updateTextBox(
+                                        box.id,
+                                        color: c.value,
+                                      ));
+                                    },
+                                    child: Container(
+                                      width: 18,
+                                      height: 18,
+                                      decoration: BoxDecoration(
+                                        color: c,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: box.color == c.value
+                                              ? colors.primary
+                                              : colors.outline,
+                                          width: box.color == c.value ? 2 : 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: colors.surface.withOpacity(0.86),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: colors.onSurface.withOpacity(0.08)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.erasing ? Icons.auto_fix_high_outlined : Icons.brush_rounded,
+                      size: 16,
+                      color: colors.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.textMode
+                          ? "Double-tap to add text box"
+                          : "Draw with pressure (use pen for best results)",
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
-        ],
-      ),
+        );
+      },
     );
   }
+}
+
+class _CanvasPainter extends CustomPainter {
+  final List<CanvasStroke> strokes;
+
+  _CanvasPainter({required this.strokes});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final stroke in strokes) {
+      if (stroke.points.length < 2) continue;
+      final paint = Paint()
+        ..color = Color(stroke.color)
+        ..strokeWidth = stroke.width
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+
+      for (var i = 0; i < stroke.points.length - 1; i++) {
+        final p1 = stroke.points[i];
+        final p2 = stroke.points[i + 1];
+        final pressureWidth1 = stroke.width * p1.pressure;
+        final pressureWidth2 = stroke.width * p2.pressure;
+        final path = Path()
+          ..moveTo(p1.x * size.width, p1.y * size.height)
+          ..lineTo(p2.x * size.width, p2.y * size.height);
+        canvas.drawPath(
+          path,
+          paint
+            ..strokeWidth = (pressureWidth1 + pressureWidth2) / 2
+            ..color = Color(stroke.color),
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
+    return oldDelegate.strokes != strokes;
+  }
+}
+
+class _CanvasGridPainter extends CustomPainter {
+  final Color color;
+
+  _CanvasGridPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+    const gap = 48.0;
+    for (double x = 0; x < size.width; x += gap) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (double y = 0; y < size.height; y += gap) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CanvasGridPainter oldDelegate) => false;
+}
+
+class CanvasDocumentData {
+  static const storageType = "canvas-v1";
+  final List<CanvasStroke> strokes;
+  final List<CanvasTextBox> textBoxes;
+  final String type;
+
+  CanvasDocumentData({
+    required this.strokes,
+    required this.textBoxes,
+    this.type = storageType,
+  });
+
+  factory CanvasDocumentData.empty() => CanvasDocumentData(
+        strokes: const [],
+        textBoxes: const [],
+      );
+
+  factory CanvasDocumentData.fromJson(Map<String, dynamic> json) {
+    return CanvasDocumentData(
+      type: json['type'] as String? ?? storageType,
+      strokes: (json['strokes'] as List<dynamic>? ?? [])
+          .map((s) => CanvasStroke.fromJson(Map<String, dynamic>.from(s)))
+          .toList(),
+      textBoxes: (json['textBoxes'] as List<dynamic>? ?? [])
+          .map((s) => CanvasTextBox.fromJson(Map<String, dynamic>.from(s)))
+          .toList(),
+    );
+  }
+
+  factory CanvasDocumentData.fromPlainText(String text) {
+    if (text.isEmpty) return CanvasDocumentData.empty();
+    return CanvasDocumentData(
+      strokes: const [],
+      textBoxes: [
+        CanvasTextBox(
+          id: _id(),
+          x: 0.08,
+          y: 0.06,
+          width: 0.6,
+          height: 0.18,
+          text: text,
+          fontSize: 16,
+          color: Colors.black.value,
+        ),
+      ],
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "type": storageType,
+        "strokes": strokes.map((e) => e.toJson()).toList(),
+        "textBoxes": textBoxes.map((e) => e.toJson()).toList(),
+      };
+
+  CanvasDocumentData addStroke(CanvasStroke stroke) {
+    return CanvasDocumentData(
+      strokes: [...strokes, stroke],
+      textBoxes: textBoxes,
+    );
+  }
+
+  CanvasDocumentData removeLastStroke() {
+    if (strokes.isEmpty) return this;
+    return CanvasDocumentData(
+      strokes: strokes.sublist(0, strokes.length - 1),
+      textBoxes: textBoxes,
+    );
+  }
+
+  CanvasDocumentData addTextBox(CanvasTextBox box) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: [...textBoxes, box],
+    );
+  }
+
+  CanvasDocumentData updateTextBox(
+    String id, {
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    String? text,
+    double? fontSize,
+    int? color,
+  }) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: textBoxes
+          .map(
+            (b) => b.id == id
+                ? b.copyWith(
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height,
+                    text: text,
+                    fontSize: fontSize,
+                    color: color,
+                  )
+                : b,
+          )
+          .toList(),
+    );
+  }
+
+  CanvasTextBox? boxById(String id) {
+    try {
+      return textBoxes.firstWhere((b) => b.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  CanvasDocumentData removeTextBox(String id) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: textBoxes.where((b) => b.id != id).toList(),
+    );
+  }
+
+  String get previewText {
+    if (textBoxes.isEmpty) return "";
+    return textBoxes.map((b) => b.text.trim()).where((t) => t.isNotEmpty).join("\n");
+  }
+}
+
+class CanvasStroke {
+  final List<CanvasPoint> points;
+  final int color;
+  final double width;
+
+  CanvasStroke({
+    required Color color,
+    required this.width,
+    required this.points,
+  }) : color = color.value;
+
+  factory CanvasStroke.fromJson(Map<String, dynamic> json) {
+    return CanvasStroke(
+      color: Color(json['color'] as int? ?? Colors.blue.value),
+      width: (json['width'] as num?)?.toDouble() ?? 3.0,
+      points: (json['points'] as List<dynamic>? ?? [])
+          .map((p) => CanvasPoint.fromJson(Map<String, dynamic>.from(p)))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "color": color,
+        "width": width,
+        "points": points.map((e) => e.toJson()).toList(),
+      };
+}
+
+class CanvasPoint {
+  final double x;
+  final double y;
+  final double pressure;
+
+  CanvasPoint(this.x, this.y, this.pressure);
+
+  factory CanvasPoint.fromJson(Map<String, dynamic> json) {
+    return CanvasPoint(
+      (json['x'] as num).toDouble(),
+      (json['y'] as num).toDouble(),
+      (json['pressure'] as num?)?.toDouble() ?? 1.0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "x": x,
+        "y": y,
+        "pressure": pressure,
+      };
+}
+
+class CanvasTextBox {
+  final String id;
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+  final String text;
+  final double fontSize;
+  final int color;
+
+  CanvasTextBox({
+    required this.id,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.text,
+    required this.fontSize,
+    required this.color,
+  });
+
+  CanvasTextBox copyWith({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    String? text,
+    double? fontSize,
+    int? color,
+  }) {
+    return CanvasTextBox(
+      id: id,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
+    );
+  }
+
+  factory CanvasTextBox.fromJson(Map<String, dynamic> json) {
+    return CanvasTextBox(
+      id: json['id'] as String,
+      x: (json['x'] as num).toDouble(),
+      y: (json['y'] as num).toDouble(),
+      width: (json['width'] as num).toDouble(),
+      height: (json['height'] as num).toDouble(),
+      text: json['text'] as String? ?? "",
+      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 16.0,
+      color: json['color'] as int? ?? Colors.black.value,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "id": id,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "text": text,
+        "fontSize": fontSize,
+        "color": color,
+      };
+}
+
+String _id() => DateTime.now().microsecondsSinceEpoch.toString() +
+    Random().nextInt(999999).toString().padLeft(6, '0');
+
+class NoteContentBundle {
+  static const storageType = "multi-v1";
+  final CanvasDocumentData canvas;
+  final String rich;
+  final String type;
+
+  NoteContentBundle({
+    required this.canvas,
+    required this.rich,
+    this.type = storageType,
+  });
+
+  factory NoteContentBundle.empty() => NoteContentBundle(
+        canvas: CanvasDocumentData.empty(),
+        rich: "",
+      );
+
+  factory NoteContentBundle.fromJson(Map<String, dynamic> json) {
+    return NoteContentBundle(
+      type: json['type'] as String? ?? storageType,
+      canvas: json['canvas'] is Map<String, dynamic>
+          ? CanvasDocumentData.fromJson(Map<String, dynamic>.from(json['canvas']))
+          : CanvasDocumentData.empty(),
+      rich: json['rich'] as String? ?? "",
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "type": storageType,
+        "canvas": canvas.toJson(),
+        "rich": rich,
+      };
 }
