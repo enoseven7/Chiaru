@@ -13,13 +13,13 @@ class NoteService {
         .findAll();
   }
 
-  Future<void> addNote(int topicId, String content) async {
+  Future<int> addNote(int topicId, String content) async {
     final note = Note()
       ..topicId = topicId
       ..content = content;
 
-    await isar.writeTxn(() async {
-      await isar.notes.put(note);
+    return await isar.writeTxn(() async {
+      return await isar.notes.put(note);
     });
   }
 

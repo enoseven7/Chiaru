@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../services/export_service.dart';
 import '../services/settings_service.dart';
+import '../services/teach_service.dart';
+import '../models/teach_settings.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -12,6 +14,26 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   bool _exporting = false;
+  bool _teachLoading = true;
+  TeachSettings? _teachSettings;
+  final _aiKeyCtrl = TextEditingController();
+  final _aiModelCtrl = TextEditingController(text: "gpt-4o-mini");
+  final _aiEndpointCtrl = TextEditingController();
+  String _aiProvider = 'openai';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTeachSettings();
+  }
+
+  @override
+  void dispose() {
+    _aiKeyCtrl.dispose();
+    _aiModelCtrl.dispose();
+    _aiEndpointCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -242,6 +264,11 @@ class _SettingsPageState extends State<SettingsPage> {
                           style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      if (_teachLoading)
+                        const LinearProgressIndicator(minHeight: 4)
+                      else
+                        _aiConfigSection(textTheme, colors),
                     ],
                   ),
                 ),
@@ -250,6 +277,78 @@ class _SettingsPageState extends State<SettingsPage> {
           },
         ),
       ),
+    );
+  }
+
+  Future<void> _loadTeachSettings() async {
+    final s = await teachService.loadSettings();
+    if (!mounted) return;
+    setState(() {
+      _teachSettings = s;
+      _aiProvider = s.cloudProvider.isEmpty ? 'openai' : s.cloudProvider;
+      _aiKeyCtrl.text = s.apiKey ?? '';
+      _aiModelCtrl.text = s.cloudModel;
+      _aiEndpointCtrl.text = s.cloudEndpoint;
+      _teachLoading = false;
+    });
+  }
+
+  Future<void> _saveTeachSettings() async {
+    final current = (_teachSettings ?? TeachSettings())
+      ..cloudProvider = _aiProvider
+      ..apiKey = _aiKeyCtrl.text.trim()
+      ..cloudModel = _aiModelCtrl.text.trim().isEmpty ? 'gpt-4o-mini' : _aiModelCtrl.text.trim()
+      ..cloudEndpoint = _aiEndpointCtrl.text.trim();
+    setState(() {
+      _teachSettings = current;
+    });
+    await teachService.saveSettings(current);
+  }
+
+  Widget _aiConfigSection(TextTheme textTheme, ColorScheme colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Text("AI provider", style: textTheme.titleMedium),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          value: _aiProvider,
+          items: const [
+            DropdownMenuItem(value: 'openai', child: Text("OpenAI-compatible")),
+            DropdownMenuItem(value: 'anthropic', child: Text("Anthropic")),
+          ],
+          onChanged: (val) {
+            if (val == null) return;
+            setState(() => _aiProvider = val);
+            _saveTeachSettings();
+          },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _aiKeyCtrl,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: "API key"),
+          onChanged: (_) => _saveTeachSettings(),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _aiModelCtrl,
+          decoration: const InputDecoration(labelText: "Model"),
+          onChanged: (_) => _saveTeachSettings(),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _aiEndpointCtrl,
+          decoration: const InputDecoration(labelText: "Custom endpoint (optional)"),
+          onChanged: (_) => _saveTeachSettings(),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          "These settings are used across AI features (Teach mode, future flashcard/quiz helpers).",
+          style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+        ),
+      ],
     );
   }
 

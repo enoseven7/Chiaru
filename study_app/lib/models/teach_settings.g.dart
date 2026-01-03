@@ -36,16 +36,6 @@ const TeachSettingsSchema = CollectionSchema(
       id: 3,
       name: r'cloudProvider',
       type: IsarType.string,
-    ),
-    r'localModel': PropertySchema(
-      id: 4,
-      name: r'localModel',
-      type: IsarType.string,
-    ),
-    r'provider': PropertySchema(
-      id: 5,
-      name: r'provider',
-      type: IsarType.string,
     )
   },
   estimateSize: _teachSettingsEstimateSize,
@@ -77,13 +67,6 @@ int _teachSettingsEstimateSize(
   bytesCount += 3 + object.cloudEndpoint.length * 3;
   bytesCount += 3 + object.cloudModel.length * 3;
   bytesCount += 3 + object.cloudProvider.length * 3;
-  {
-    final value = object.localModel;
-    if (value != null) {
-      bytesCount += 3 + value.length * 3;
-    }
-  }
-  bytesCount += 3 + object.provider.length * 3;
   return bytesCount;
 }
 
@@ -97,8 +80,6 @@ void _teachSettingsSerialize(
   writer.writeString(offsets[1], object.cloudEndpoint);
   writer.writeString(offsets[2], object.cloudModel);
   writer.writeString(offsets[3], object.cloudProvider);
-  writer.writeString(offsets[4], object.localModel);
-  writer.writeString(offsets[5], object.provider);
 }
 
 TeachSettings _teachSettingsDeserialize(
@@ -113,8 +94,6 @@ TeachSettings _teachSettingsDeserialize(
   object.cloudModel = reader.readString(offsets[2]);
   object.cloudProvider = reader.readString(offsets[3]);
   object.id = id;
-  object.localModel = reader.readStringOrNull(offsets[4]);
-  object.provider = reader.readString(offsets[5]);
   return object;
 }
 
@@ -132,10 +111,6 @@ P _teachSettingsDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readString(offset)) as P;
-    case 4:
-      return (reader.readStringOrNull(offset)) as P;
-    case 5:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -853,296 +828,6 @@ extension TeachSettingsQueryFilter
       ));
     });
   }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelIsNull() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(const FilterCondition.isNull(
-        property: r'localModel',
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelIsNotNull() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(const FilterCondition.isNotNull(
-        property: r'localModel',
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelEqualTo(
-    String? value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelGreaterThan(
-    String? value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelLessThan(
-    String? value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelBetween(
-    String? lower,
-    String? upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'localModel',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelStartsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelEndsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelContains(String value, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.contains(
-        property: r'localModel',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelMatches(String pattern, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.matches(
-        property: r'localModel',
-        wildcard: pattern,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelIsEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'localModel',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      localModelIsNotEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'localModel',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerEqualTo(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerGreaterThan(
-    String value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerLessThan(
-    String value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerBetween(
-    String lower,
-    String upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'provider',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerStartsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerEndsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerContains(String value, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.contains(
-        property: r'provider',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerMatches(String pattern, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.matches(
-        property: r'provider',
-        wildcard: pattern,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerIsEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'provider',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
-      providerIsNotEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'provider',
-        value: '',
-      ));
-    });
-  }
 }
 
 extension TeachSettingsQueryObject
@@ -1203,32 +888,6 @@ extension TeachSettingsQuerySortBy
       sortByCloudProviderDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'cloudProvider', Sort.desc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> sortByLocalModel() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'localModel', Sort.asc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
-      sortByLocalModelDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'localModel', Sort.desc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> sortByProvider() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'provider', Sort.asc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
-      sortByProviderDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'provider', Sort.desc);
     });
   }
 }
@@ -1299,32 +958,6 @@ extension TeachSettingsQuerySortThenBy
       return query.addSortBy(r'id', Sort.desc);
     });
   }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> thenByLocalModel() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'localModel', Sort.asc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
-      thenByLocalModelDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'localModel', Sort.desc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> thenByProvider() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'provider', Sort.asc);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
-      thenByProviderDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'provider', Sort.desc);
-    });
-  }
 }
 
 extension TeachSettingsQueryWhereDistinct
@@ -1356,20 +989,6 @@ extension TeachSettingsQueryWhereDistinct
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'cloudProvider',
           caseSensitive: caseSensitive);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QDistinct> distinctByLocalModel(
-      {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'localModel', caseSensitive: caseSensitive);
-    });
-  }
-
-  QueryBuilder<TeachSettings, TeachSettings, QDistinct> distinctByProvider(
-      {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'provider', caseSensitive: caseSensitive);
     });
   }
 }
@@ -1405,18 +1024,6 @@ extension TeachSettingsQueryProperty
       cloudProviderProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'cloudProvider');
-    });
-  }
-
-  QueryBuilder<TeachSettings, String?, QQueryOperations> localModelProperty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'localModel');
-    });
-  }
-
-  QueryBuilder<TeachSettings, String, QQueryOperations> providerProperty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'provider');
     });
   }
 }

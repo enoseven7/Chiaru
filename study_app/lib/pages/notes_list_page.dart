@@ -5,6 +5,7 @@ import 'note_editor_page.dart';
 import '../services/note_service.dart';
 import 'dart:convert';
 import 'package:flutter_quill/flutter_quill.dart' show Document;
+import '../services/note_title_service.dart';
 
 class NotesListPage extends StatefulWidget {
   final Topic topic;
@@ -17,6 +18,7 @@ class NotesListPage extends StatefulWidget {
 
 class _NotesListPageState extends State<NotesListPage> {
   List<Note> notes = [];
+  Map<int, String> titles = {};
 
   @override
   void initState() {
@@ -68,8 +70,14 @@ class _NotesListPageState extends State<NotesListPage> {
             ..topicId = widget.topic.id
             ..content = "",
           onSave: (newNote) async {
-            await noteService.addNote(newNote.topicId, newNote.content);
-            await _loadNotes();
+            final id = await noteService.addNote(newNote.topicId, newNote.content);
+            if (newNote.id == 0) newNote.id = id;
+            return id;
+          },
+          onSaveTitle: (id, title) async {
+            if (id > 0 && title.trim().isNotEmpty) {
+              await noteTitleService.saveTitle(id, title);
+            }
           },
         ),
       ),
@@ -84,7 +92,12 @@ class _NotesListPageState extends State<NotesListPage> {
           note: note,
           onSave: (updated) async {
             await noteService.updateNote(updated);
-            await _loadNotes();
+            return updated.id;
+          },
+          onSaveTitle: (id, title) async {
+            if (id > 0 && title.trim().isNotEmpty) {
+              await noteTitleService.saveTitle(id, title);
+            }
           },
         ),
       ),
@@ -119,6 +132,7 @@ class _NotesListPageState extends State<NotesListPage> {
 
   Future<void> _loadNotes() async {
     notes = await noteService.getNotesForTopic(widget.topic.id);
+    titles = await noteTitleService.loadTitles(notes.map((n) => n.id).toList());
     if (mounted) setState(() {});
   }
 
@@ -136,22 +150,54 @@ class _NotesListPageState extends State<NotesListPage> {
               itemCount: notes.length,
               itemBuilder: (context, index) {
                 final note = notes[index];
+                final text = _getNotePreviewParagraph(note);
+                final title = titles[note.id] ??
+                    (text.isEmpty
+                        ? "(Untitled note)"
+                        : (text.length > 30 ? "${text.substring(0, 30)}..." : text));
 
                 return ListTile(
                   leading: const Icon(Icons.note_alt),
                   title: Text(
-                    _getNotePreviewLine(note),
+                    title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-
                   subtitle: Text(
-                    _getNotePreviewParagraph(note),
+                    text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey.shade600),
                   ),
-
+                  trailing: IconButton(
+                    icon: const Icon(Icons.drive_file_rename_outline),
+                    tooltip: "Rename",
+                    onPressed: () async {
+                      final controller = TextEditingController(text: titles[note.id] ?? title);
+                      final newName = await showDialog<String>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text("Rename note"),
+                          content: TextField(
+                            controller: controller,
+                            decoration: const InputDecoration(labelText: "Note title"),
+                            autofocus: true,
+                          ),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, controller.text.trim()),
+                              child: const Text("Save"),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (newName != null && newName.isNotEmpty) {
+                        await noteTitleService.saveTitle(note.id, newName);
+                        await _loadNotes();
+                      }
+                    },
+                  ),
                   onTap: () => _openNote(note),
                   onLongPress: () => _showNoteMenu(note),
                 );

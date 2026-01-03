@@ -7,9 +7,6 @@ class TeachSettings {
   /// Singleton entry: id = 0
   Id id = 0;
 
-  /// 'cloud' or 'local'
-  String provider = 'local';
-
   /// Which cloud provider to call (e.g., openai, anthropic).
   String cloudProvider = 'openai';
 
@@ -18,9 +15,6 @@ class TeachSettings {
 
   /// Optional custom endpoint for OpenAI-compatible proxies.
   String cloudEndpoint = '';
-
-  /// Selected local model id/name
-  String? localModel;
 
   /// Placeholder for cloud key (not used yet)
   String? apiKey;

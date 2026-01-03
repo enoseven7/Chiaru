@@ -140,9 +140,7 @@ class ExportService {
 
   Map<String, dynamic> _teachSettingsToJson(TeachSettings s) => {
         'id': s.id,
-        'localModel': s.localModel,
         'apiKey': s.apiKey,
-        'provider': s.provider,
         'cloudProvider': s.cloudProvider,
         'cloudModel': s.cloudModel,
         'cloudEndpoint': s.cloudEndpoint,

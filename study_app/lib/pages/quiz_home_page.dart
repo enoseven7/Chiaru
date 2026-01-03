@@ -13,6 +13,10 @@ import '../pages/topics_panel.dart';
 import '../services/quiz_service.dart';
 import '../services/subject_services.dart';
 import '../services/topic_service.dart';
+import '../services/ai_generation_service.dart';
+import '../services/teach_service.dart';
+import '../services/note_service.dart';
+import '../services/note_title_service.dart';
 
 class QuizHomePage extends StatefulWidget {
   const QuizHomePage({super.key});
@@ -175,6 +179,288 @@ class _QuizHomePageState extends State<QuizHomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _generateQuizWithAi(int topicId) async {
+    final settings = await teachService.loadSettings();
+    if ((settings.apiKey ?? '').trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Add an AI API key in Settings > AI usage first.")),
+      );
+      return;
+    }
+
+    final titleCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final notes = await noteService.getNotesForTopic(topicId);
+    final titleMap = await noteTitleService.loadTitles(notes.map((n) => n.id).toList());
+    final Set<int> selectedNotes = {};
+    int maxQuestions = 8;
+    int tokenLimit = 768;
+    List<String> pdfs = [];
+    bool working = false;
+    String status = "";
+
+    int estimateTokens() {
+      final base = [
+        titleCtrl.text,
+        descCtrl.text,
+        ...selectedNotes
+            .map((id) => notes.firstWhere((n) => n.id == id, orElse: () => notes.first).content)
+            .map(aiGenerationService.extractNoteText),
+      ].where((e) => e.trim().isNotEmpty).join("\n");
+      return aiGenerationService.estimateTokens(base, perItem: 90, itemCount: maxQuestions);
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setLocal) {
+          return AlertDialog(
+            title: const Text("Generate quiz with AI"),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: titleCtrl,
+                      decoration: const InputDecoration(labelText: "Quiz title"),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: descCtrl,
+                      decoration: const InputDecoration(labelText: "Description (optional)"),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      alignment: Alignment.centerLeft,
+                      margin: const EdgeInsets.only(top: 8, bottom: 4),
+                      child: const Text("Include notes"),
+                    ),
+                    Container(
+                      height: 140,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Theme.of(context).colorScheme.outline),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: notes.isEmpty
+                          ? const Center(child: Text("No notes in this topic."))
+                          : Scrollbar(
+                              child: ListView.builder(
+                                itemCount: notes.length,
+                                itemBuilder: (_, idx) {
+                                  final n = notes[idx];
+                                  final text = aiGenerationService.extractNoteText(n.content);
+                                  final title = noteTitleService.displayTitle(n.id, text, titleMap);
+                                  final checked = selectedNotes.contains(n.id);
+                                  return GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onSecondaryTap: () async {
+                                      final controller = TextEditingController(text: titleMap[n.id] ?? title);
+                                      final newName = await showDialog<String>(
+                                        context: context,
+                                        builder: (_) => AlertDialog(
+                                          title: const Text("Rename note"),
+                                          content: TextField(
+                                            controller: controller,
+                                            decoration: const InputDecoration(labelText: "Note name"),
+                                            autofocus: true,
+                                          ),
+                                          actions: [
+                                            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(context, controller.text.trim()),
+                                              child: const Text("Save"),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                      if (newName != null && newName.isNotEmpty) {
+                                        await noteTitleService.saveTitle(n.id, newName);
+                                        setLocal(() {
+                                          titleMap[n.id] = newName;
+                                        });
+                                      }
+                                    },
+                                    child: CheckboxListTile(
+                                      dense: true,
+                                      value: checked,
+                                      title: Text(title),
+                                      onChanged: (v) {
+                                        setLocal(() {
+                                          if (v == true) {
+                                            selectedNotes.add(n.id);
+                                          } else {
+                                            selectedNotes.remove(n.id);
+                                          }
+                                        });
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(child: Text("PDFs: ${pdfs.length} selected")),
+                        TextButton.icon(
+                          onPressed: working
+                              ? null
+                              : () async {
+                                  final result = await FilePicker.platform.pickFiles(
+                                    allowMultiple: true,
+                                    type: FileType.custom,
+                                    allowedExtensions: ['pdf'],
+                                  );
+                                  if (result != null) {
+                                    setLocal(() {
+                                      pdfs = result.paths.whereType<String>().toList();
+                                    });
+                                  }
+                                },
+                          icon: const Icon(Icons.upload_file),
+                          label: const Text("Add PDFs"),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("Max questions"),
+                              Slider(
+                                value: maxQuestions.toDouble(),
+                                min: 4,
+                                max: 20,
+                                divisions: 16,
+                                label: "$maxQuestions",
+                                onChanged: working
+                                    ? null
+                                    : (v) => setLocal(() {
+                                          maxQuestions = v.round();
+                                        }),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("Token limit"),
+                              Slider(
+                                value: tokenLimit.toDouble(),
+                                min: 256,
+                                max: 2048,
+                                divisions: 14,
+                                label: "$tokenLimit",
+                                onChanged: working
+                                    ? null
+                                    : (v) => setLocal(() {
+                                          tokenLimit = v.round();
+                                        }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        "Estimated tokens (notes only, PDFs not counted): ${estimateTokens()}",
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (status.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        status,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: working ? null : () => Navigator.pop(ctx),
+                child: const Text("Cancel"),
+              ),
+              FilledButton(
+                onPressed: working
+                    ? null
+                    : () async {
+                        setLocal(() {
+                          working = true;
+                          status = "";
+                        });
+                        try {
+                          final created = await aiGenerationService.generateQuiz(
+                            topicId: topicId,
+                            title: titleCtrl.text.trim().isEmpty ? "AI Quiz" : titleCtrl.text.trim(),
+                            description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                            notes: selectedNotes
+                                    .map((id) => notes.firstWhere((n) => n.id == id).content)
+                                    .map(aiGenerationService.extractNoteText)
+                                    .where((t) => t.trim().isNotEmpty)
+                                    .join("\n\n")
+                                    .trim()
+                                    .isEmpty
+                                ? null
+                                : selectedNotes
+                                    .map((id) => notes.firstWhere((n) => n.id == id).content)
+                                    .map(aiGenerationService.extractNoteText)
+                                    .where((t) => t.trim().isNotEmpty)
+                                    .join("\n\n")
+                                    .trim(),
+                            pdfPaths: pdfs,
+                            maxQuestions: maxQuestions,
+                            tokenLimit: tokenLimit,
+                          );
+                          if (!mounted) return;
+                          await _loadQuizzes(topicId);
+                          Navigator.pop(ctx);
+                          if (created == 0) {
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(const SnackBar(content: Text("No questions were generated.")));
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Generated $created questions in a new quiz.")));
+                          }
+                        } catch (e) {
+                          setLocal(() {
+                            working = false;
+                            status = e.toString();
+                          });
+                        }
+                      },
+                child: working
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text("Generate"),
+              ),
+            ],
+          );
+        });
+      },
     );
   }
 
@@ -415,6 +701,11 @@ class _QuizHomePageState extends State<QuizHomePage> {
                             : () => _importQuiz(currentTopicId),
                         icon: const Icon(Icons.file_upload_outlined, size: 18),
                         label: const Text("Import"),
+                      ),
+                      TextButton.icon(
+                        onPressed: currentTopicId == 0 ? null : () => _generateQuizWithAi(currentTopicId),
+                        icon: const Icon(Icons.auto_awesome, size: 18),
+                        label: const Text("Generate with AI"),
                       ),
                       TextButton.icon(
                         onPressed: currentTopicId == 0 ? null : _addQuiz,
