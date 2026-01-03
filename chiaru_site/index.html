@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chiaru | Study Companion</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/White_Transparent.png" alt="Chiaru logo" class="logo-img" id="logo-img" />
+      <div class="logo">Chiaru</div>
+    </div>
+    <nav>
+      <a href="#about">About</a>
+      <a href="#features">Features</a>
+      <a href="#downloads">Download</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <button class="mode-toggle" id="mode-toggle" aria-label="Toggle theme">
+      <span class="mode-toggle__icon" id="mode-icon">🌙</span>
+    </button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero__text">
+        <p class="pill">All-in-one study workspace</p>
+        <h1>Keep your notes, flashcards, and quizzes in sync.</h1>
+        <p class="lede">
+          Chiaru combines handwritten notes, rich text, flashcards, and quizzes into a focused desktop app built
+          for learners who want less friction and more flow.
+        </p>
+        <div class="hero__actions">
+          <a class="btn btn--primary" href="#downloads">Download Chiaru</a>
+          <a class="btn btn--ghost" href="#features">See what’s inside</a>
+        </div>
+        <ul class="hero__highlights">
+          <li>Handwriting + rich text canvas</li>
+          <li>Flashcards with spaced-repetition (SM-2) algorithms</li>
+          <li>Quiz creation and review mode</li>
+          <li>AI Usage for flashcard deck and quiz generation, as well as the feynman technique</li>
+        </ul>
+      </div>
+      <div class="hero__card">
+        <div class="card__header">Today’s plan</div>
+        <div class="card__body">
+          <div class="card__row">
+            <span>Flashcards due</span>
+            <strong>20</strong>
+          </div>
+          <div class="card__row">
+            <span>Quizzes scheduled</span>
+            <strong>2</strong>
+          </div>
+          <div class="card__row">
+            <span>Study streak</span>
+            <strong>5 days</strong>
+          </div>
+        </div>
+        <div class="card__footer">
+          <span class="badge">Offline-first</span>
+          <span class="badge badge--accent">Windows ready</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="about" class="section">
+      <div class="section__header">
+        <p class="pill">Why Chiaru</p>
+        <h2>Built for focused study sessions.</h2>
+        <p class="lede">
+          Chiaru keeps your learning stack simple: take notes, generate flashcards, and test yourself without
+          juggling multiple apps.
+        </p>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <h3>Unified workspace</h3>
+          <p>Rich text plus canvas notes in the same app, so you can type, draw, and annotate freely.</p>
+        </article>
+        <article class="card">
+          <h3>Smart review</h3>
+          <p>SM2 scheduling keeps cards coming back at the right time to help you remember.</p>
+        </article>
+        <article class="card">
+          <h3>Quizzes that fit you</h3>
+          <p>Create quizzes from your notes and track what you need to revisit before the next exam.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="features" class="section section--surface">
+      <div class="section__header">
+        <p class="pill">What you get</p>
+        <h2>Notes, flashcards, quizzes, and even AI communication - all together.</h2>
+      </div>
+      <div class="feature-list">
+        <div class="feature">
+          <div class="feature__icon">🖊️</div>
+          <div>
+            <h3>Hybrid note editor</h3>
+            <p>Combine handwriting with rich text. Add textboxes, draw with pressure-sensitive pen support, and keep everything in one canvas.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature__icon">📇</div>
+          <div>
+            <h3>Spaced repetition</h3>
+            <p>SM-2 scheduling with due counts, learning steps, and review piles to keep you on track.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature__icon">📝</div>
+          <div>
+            <h3>Quizzes</h3>
+            <p>Build quick quizzes from your material and review them on your own schedule.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature__icon">🤖</div>
+          <div>
+            <h3>AI</h3>
+            <p>Ask AI to critique knowledge on a subject, or use it to create flashcards or quizzes from notes and .pdf files.</p>
+          </div>
+        </div>
+        <div class="feature">
+          <div class="feature__icon">🔌</div>
+          <div>
+            <h3>Offline-friendly</h3>
+            <p>Work locally and sync when you choose. Your study flow isn’t tied to a connection.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="downloads" class="section">
+      <div class="section__header">
+        <p class="pill">Download</p>
+        <h2>Get Chiaru for your desktop</h2>
+        <p class="lede">Choose the build that fits your system. Windows build is ready; Mac/Linux coming soon.</p>
+      </div>
+      <div class="download-grid">
+        <div class="download-card">
+          <h3>Windows</h3>
+          <p>ZIP file hosted on GitHub</p>
+          <a class="btn btn--primary" href="#" aria-label="Download Chiaru for Windows">Download .exe</a>
+        </div>
+        <div class="download-card muted">
+          <h3>macOS</h3>
+          <p>Not yet available. Stay tuned.</p>
+          <button class="btn btn--ghost" disabled>Coming soon</button>
+        </div>
+        <div class="download-card muted">
+          <h3>Linux</h3>
+          <p>Not yet available. Stay tuned.</p>
+          <button class="btn btn--ghost" disabled>Coming soon</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="section section--surface">
+      <div class="section__header">
+        <p class="pill">FAQ</p>
+        <h2>Quick answers</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>Is Chiaru free?</summary>
+          <p>Yes. Chiaru for desktop is completely free.</p>
+        </details>
+        <details>
+          <summary>Does it work offline?</summary>
+          <p>Yes. Your notes, flashcards, and quizzes are stored locally. You can export or import whenever you like. Only AI features use network, but we plan to add local AI usage in the future.</p>
+        </details>
+        <details>
+          <summary>Can I import from Anki?</summary>
+          <p>Chiaru supports Anki flashcard imports, and they are constantly being refined as Chiaru updates.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="logo">Chiaru</div>
+    <p>Stay organized. Keep learning.</p>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
