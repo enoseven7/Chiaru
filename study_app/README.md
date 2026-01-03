@@ -1,16 +1,35 @@
-# study_app
+# Chiaru
 
-A new Flutter project.
+Chiaru is a focused study workspace that combines notes, flashcards, and quizzes in one place. It’s built with Flutter and runs offline-first.
 
-## Getting Started
+## Platforms
+- **Windows**: Supported and tested.
+- **macOS / Linux**: Not made yet, but expect for them to come soon.
 
-This project is a starting point for a Flutter application.
+## Features
+- Hybrid note editor (rich text + canvas for handwriting).
+- Anki-inspired flashcards with spaced-repetition scheduling.
+- Quiz creation and review.
+- Cloud AI usage for feynman technique and flashcard / quiz generation.
+- Offline-friendly local storage with export options.
 
-A few resources to get you started if this is your first Flutter project:
+## Building (Windows)
+1) Install Flutter (3.10+), the Windows desktop toolchain, and run `flutter doctor` until clean.
+2) From the project root:
+   ```bash
+   flutter pub get
+   flutter build windows
+   ```
+3) The build artifacts will be under `build/windows/runner/Release` (or `build/windows/x64/Runner` depending on your Flutter version).
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Running
+```bash
+flutter run -d windows
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Or you can simply run the .exe file you download.
+
+## Notes / To-Do List
+- Local LLM support for users to run AI locally and offline without API keys.
+- MacOS and Linux supported versions
+
