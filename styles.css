@@ -324,6 +324,7 @@ main {
   height: 40px;
   display: grid;
   place-items: center;
+  margin-top: 3vh;
   border-radius: 12px;
   background: rgba(75, 139, 254, 0.15);
 }
