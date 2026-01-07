@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../models/note.dart';
@@ -236,6 +237,37 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     });
   }
 
+  Future<void> _deleteNote(Note note) async {
+    await noteService.deleteNote(note.id);
+    await _loadNotesForTopic();
+    if (_activeNote?.id == note.id) {
+      setState(() {
+        _activeNote = _notes.isNotEmpty ? _notes.first : null;
+        if (_activeNote != null) {
+          final bundle = _bundleFromRaw(_activeNote!.content);
+          _canvas = bundle.canvas;
+          _initRichForNote(_activeNote);
+        } else {
+          _canvas = CanvasDocumentData.empty();
+          _initRichForNote(null);
+        }
+      });
+    }
+  }
+
+  Future<void> _showNoteContextMenu(Offset position, Note note) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "delete", child: Text("Delete note")),
+      ],
+    );
+    if (selection == "delete") {
+      await _deleteNote(note);
+    }
+  }
+
   String _notePreview(Note note) {
     try {
       final bundle = _bundleFromRaw(note.content);
@@ -304,32 +336,37 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                     : colors.onSurface.withOpacity(0.08),
               ),
             ),
-            child: ListTile(
-              dense: true,
-              visualDensity: const VisualDensity(vertical: -1),
-              title: Text(
-                _previewLine(note),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodyLarge?.copyWith(
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                  color: isSelected ? colors.primary : colors.onSurface,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onSecondaryTapDown: (details) =>
+                  _showNoteContextMenu(details.globalPosition, note),
+              child: ListTile(
+                dense: true,
+                visualDensity: const VisualDensity(vertical: -1),
+                title: Text(
+                  _previewLine(note),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyLarge?.copyWith(
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                    color: isSelected ? colors.primary : colors.onSurface,
+                  ),
                 ),
-              ),
-              subtitle: Text(
-                _previewParagraph(note),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurfaceVariant.withOpacity(0.8),
+                subtitle: Text(
+                  _previewParagraph(note),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colors.onSurfaceVariant.withOpacity(0.8),
+                  ),
                 ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: isSelected ? colors.primary : colors.onSurfaceVariant,
+                ),
+                onTap: () => _selectNote(note),
               ),
-              trailing: Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 14,
-                color: isSelected ? colors.primary : colors.onSurfaceVariant,
-              ),
-              onTap: () => _selectNote(note),
             ),
           ),
         );
@@ -830,10 +867,15 @@ class _CanvasBoardState extends State<_CanvasBoard> {
   CanvasStroke? _activeStroke;
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
+  final FocusNode _canvasFocusNode = FocusNode();
+  final ScrollController _horizontalController = ScrollController();
+  final ScrollController _verticalController = ScrollController();
   String? _draggingId;
   Offset _dragStartBoxPos = Offset.zero;
   Offset _dragAccum = Offset.zero;
   String? _selectedBoxId;
+  Offset? _lastPointerPos;
+  Size? _lastCanvasSize;
 
   @override
   void didUpdateWidget(covariant _CanvasBoard oldWidget) {
@@ -859,6 +901,9 @@ class _CanvasBoardState extends State<_CanvasBoard> {
 
   @override
   void dispose() {
+    _horizontalController.dispose();
+    _verticalController.dispose();
+    _canvasFocusNode.dispose();
     for (final c in _controllers.values) {
       c.dispose();
     }
@@ -870,6 +915,65 @@ class _CanvasBoardState extends State<_CanvasBoard> {
 
   void _updateDoc(CanvasDocumentData next) {
     widget.onChanged(next);
+  }
+
+  bool _isEditingTextBox() {
+    for (final focus in _focusNodes.values) {
+      if (focus.hasFocus) return true;
+    }
+    return false;
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_isEditingTextBox()) return KeyEventResult.ignored;
+    if (HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
+    final character = event.character;
+    if (character == null || character.isEmpty) return KeyEventResult.ignored;
+    if (character == '\n' || character == '\r' || character == '\t') {
+      return KeyEventResult.ignored;
+    }
+    final size = _lastCanvasSize;
+    if (size == null) return KeyEventResult.ignored;
+    _addTextBoxForTyping(character, size);
+    return KeyEventResult.handled;
+  }
+
+  void _maybeExpandCanvas(Offset localPosition, Size size) {
+    const edgeThreshold = 120.0;
+    const expandBy = 600.0;
+    double nextWidth = size.width;
+    double nextHeight = size.height;
+    if (localPosition.dx > size.width - edgeThreshold) {
+      nextWidth = size.width + expandBy;
+    }
+    if (localPosition.dy > size.height - edgeThreshold) {
+      nextHeight = size.height + expandBy;
+    }
+    if (nextWidth != size.width || nextHeight != size.height) {
+      final scaleX = size.width / nextWidth;
+      final scaleY = size.height / nextHeight;
+      if (_activeStroke != null) {
+        _activeStroke = CanvasStroke(
+          color: Color(_activeStroke!.color),
+          width: _activeStroke!.width,
+          points: _activeStroke!.points
+              .map(
+                (p) => CanvasPoint(
+                  p.x * scaleX,
+                  p.y * scaleY,
+                  p.pressure,
+                ),
+              )
+              .toList(),
+        );
+      }
+      _updateDoc(widget.document.resize(nextWidth, nextHeight));
+    }
   }
 
   void _startStroke(PointerDownEvent event, Size size) {
@@ -895,6 +999,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     }
     if (_activeStroke == null || widget.textMode) return;
     final norm = _normalize(event.localPosition, size);
+    _maybeExpandCanvas(event.localPosition, size);
     setState(() => _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _pressure(event))));
   }
 
@@ -920,29 +1025,52 @@ class _CanvasBoardState extends State<_CanvasBoard> {
         CanvasDocumentData(
           strokes: next,
           textBoxes: widget.document.textBoxes,
+          width: widget.document.width,
+          height: widget.document.height,
         ),
       );
     }
   }
 
-  void _addTextBox(Offset position, Size size) {
+  void _addTextBox(
+    Offset position,
+    Size size, {
+    String initialText = "",
+    bool focus = false,
+  }) {
     final norm = _normalize(position, size);
     const defaultWidth = 0.32;
     const defaultHeight = 0.16;
+    final id = _id();
     _updateDoc(
       widget.document.addTextBox(
         CanvasTextBox(
-          id: _id(),
+          id: id,
           x: norm.dx.clamp(0.0, 1.0 - defaultWidth),
           y: norm.dy.clamp(0.0, 1.0 - defaultHeight),
           width: defaultWidth,
           height: defaultHeight,
-          text: "",
+          text: initialText,
           fontSize: 16,
           color: Colors.black.value,
         ),
       ),
     );
+    _maybeExpandCanvas(position, size);
+    if (focus) {
+      _selectedBoxId = id;
+      _controllers.putIfAbsent(id, () => TextEditingController(text: initialText));
+      final focusNode = _focusNodes.putIfAbsent(id, () => FocusNode());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        FocusScope.of(context).requestFocus(focusNode);
+      });
+    }
+  }
+
+  void _addTextBoxForTyping(String initialText, Size size) {
+    final position = _lastPointerPos ?? Offset(size.width * 0.5, size.height * 0.45);
+    _addTextBox(position, size, initialText: initialText, focus: true);
   }
 
   void _deleteTextBox(String id) {
@@ -981,6 +1109,11 @@ class _CanvasBoardState extends State<_CanvasBoard> {
       x: nextX,
       y: nextY,
     ));
+    final bottomRight = Offset(
+      (nextX + width) * size.width,
+      (nextY + height) * size.height,
+    );
+    _maybeExpandCanvas(bottomRight, size);
   }
 
   Offset _normalize(Offset pos, Size size) {
@@ -1004,233 +1137,295 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        return Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: colors.onSurface.withOpacity(0.08)),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Listener(
-                  onPointerDown: (e) => _startStroke(e, size),
-                  onPointerMove: (e) => _extendStroke(e, size),
-                  onPointerUp: (_) => _endStroke(),
-                  onPointerCancel: (_) => _endStroke(),
-                  child: GestureDetector(
-                    onDoubleTapDown: (details) {
-                      _addTextBox(details.localPosition, size);
-                    },
-                    child: CustomPaint(
-                      painter: _CanvasPainter(
-                        strokes: [
-                          ...widget.document.strokes,
-                          if (_activeStroke != null) _activeStroke!,
-                        ],
-                      ),
-                      foregroundPainter: _CanvasGridPainter(colors.onSurface.withOpacity(0.06)),
-                      child: Container(),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            ...widget.document.textBoxes.map(
-              (box) {
-                final controller = _controllers[box.id] ?? TextEditingController(text: box.text);
-                final focus = _focusNodes[box.id] ?? FocusNode();
-                final boxSize = Size(box.width * size.width, box.height * size.height);
-                return Positioned(
-                  left: box.x * size.width,
-                  top: box.y * size.height,
-                  width: boxSize.width,
-                  height: boxSize.height,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color:
-                            _draggingId == box.id ? colors.primary : colors.onSurface.withOpacity(0.14),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          blurRadius: 8,
-                          color: colors.shadow.withOpacity(0.12),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onPanStart: (_) => setState(() {
-                            _startDragBox(box.id, size);
-                          }),
-                          onPanUpdate: (details) => _onDragBox(box.id, details.delta, size),
-                          onPanEnd: (_) => setState(() => _draggingId = null),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                            child: Row(
-                              children: [
-                                Icon(Icons.drag_indicator, size: 14, color: colors.onSurfaceVariant),
-                                const SizedBox(width: 6),
-                                Text(
-                                  "Text",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.onSurfaceVariant,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const Spacer(),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: TextField(
-                              controller: controller,
-                              focusNode: focus,
-                              maxLines: null,
-                              decoration: const InputDecoration.collapsed(hintText: "Text"),
-                              style: TextStyle(
-                                fontSize: box.fontSize,
-                                color: Color(box.color),
-                              ),
-                              onTap: () => setState(() => _selectedBoxId = box.id),
-                              onChanged: (v) => _onTextChanged(box.id, v),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
+        final canvasSize = Size(widget.document.width, widget.document.height);
+        _lastCanvasSize = canvasSize;
+        return Focus(
+          focusNode: _canvasFocusNode,
+          autofocus: true,
+          onKeyEvent: _handleKeyEvent,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.trackpad,
+                PointerDeviceKind.touch,
               },
             ),
-            if (_selectedBoxId != null)
-              Builder(
-                builder: (_) {
-                  final box = widget.document.boxById(_selectedBoxId!);
-                  if (box == null) return const SizedBox.shrink();
-                  final toolbarWidth = 220.0;
-                  final left = box.x * size.width;
-                  final top = (box.y * size.height) - 52;
-                  final clampedLeft = left.clamp(6.0, size.width - toolbarWidth - 6.0);
-                  final clampedTop = top.clamp(6.0, size.height - 56.0);
-                  return Positioned(
-                    left: clampedLeft,
-                    top: clampedTop,
-                    child: Container(
-                      width: toolbarWidth,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: colors.surface,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: colors.onSurface.withOpacity(0.12)),
-                        boxShadow: [
-                          BoxShadow(
-                            blurRadius: 8,
-                            color: colors.shadow.withOpacity(0.16),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+            child: Scrollbar(
+              controller: _verticalController,
+              child: SingleChildScrollView(
+                controller: _verticalController,
+                scrollDirection: Axis.vertical,
+                child: Scrollbar(
+                  controller: _horizontalController,
+                  notificationPredicate: (notification) =>
+                      notification.metrics.axis == Axis.horizontal,
+                  child: SingleChildScrollView(
+                    controller: _horizontalController,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: canvasSize.width,
+                      height: canvasSize.height,
+                      child: Stack(
                         children: [
-                          Row(
-                            children: [
-                              const Text("Text color", style: TextStyle(fontSize: 12)),
-                              const Spacer(),
-                              IconButton(
-                                tooltip: "Delete box",
-                                icon: const Icon(Icons.delete_outline, size: 16),
-                                onPressed: () => _deleteTextBox(box.id),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: colors.surfaceVariant.withOpacity(0.5),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: colors.onSurface.withOpacity(0.08)),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Listener(
+                                onPointerDown: (e) {
+                                  _canvasFocusNode.requestFocus();
+                                  _lastPointerPos = e.localPosition;
+                                  _startStroke(e, canvasSize);
+                                },
+                                onPointerMove: (e) {
+                                  _lastPointerPos = e.localPosition;
+                                  _extendStroke(e, canvasSize);
+                                },
+                                onPointerUp: (_) => _endStroke(),
+                                onPointerCancel: (_) => _endStroke(),
+                                child: CustomPaint(
+                                  painter: _CanvasPainter(
+                                    strokes: [
+                                      ...widget.document.strokes,
+                                      if (_activeStroke != null) _activeStroke!,
+                                    ],
+                                  ),
+                                  foregroundPainter:
+                                      _CanvasGridPainter(colors.onSurface.withOpacity(0.06)),
+                                  child: Container(),
+                                ),
                               ),
-                              IconButton(
-                                tooltip: "Close toolbar",
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: () => setState(() => _selectedBoxId = null),
-                              ),
-                            ],
+                            ),
                           ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            children: widget.textPalette
-                                .map(
-                                  (c) => GestureDetector(
-                                    onTap: () {
-                                      _updateDoc(widget.document.updateTextBox(
-                                        box.id,
-                                        color: c.value,
-                                      ));
-                                    },
-                                    child: Container(
-                                      width: 18,
-                                      height: 18,
-                                      decoration: BoxDecoration(
-                                        color: c,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: box.color == c.value
-                                              ? colors.primary
-                                              : colors.outline,
-                                          width: box.color == c.value ? 2 : 1,
+                          ...widget.document.textBoxes.map(
+                            (box) {
+                              final controller =
+                                  _controllers[box.id] ?? TextEditingController(text: box.text);
+                              final focus = _focusNodes[box.id] ?? FocusNode();
+                              final boxSize = Size(
+                                box.width * canvasSize.width,
+                                box.height * canvasSize.height,
+                              );
+                              return Positioned(
+                                left: box.x * canvasSize.width,
+                                top: box.y * canvasSize.height,
+                                width: boxSize.width,
+                                height: boxSize.height,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: colors.surface,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: _draggingId == box.id
+                                          ? colors.primary
+                                          : colors.onSurface.withOpacity(0.14),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        blurRadius: 8,
+                                        color: colors.shadow.withOpacity(0.12),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onPanStart: (_) => setState(() {
+                                          _startDragBox(box.id, canvasSize);
+                                        }),
+                                        onPanUpdate: (details) =>
+                                            _onDragBox(box.id, details.delta, canvasSize),
+                                        onPanEnd: (_) => setState(() => _draggingId = null),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 6,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.drag_indicator,
+                                                size: 14,
+                                                color: colors.onSurfaceVariant,
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                "Text",
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: colors.onSurfaceVariant,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                            ],
+                                          ),
                                         ),
                                       ),
+                                      const Divider(height: 1),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8.0),
+                                          child: TextField(
+                                            controller: controller,
+                                            focusNode: focus,
+                                            maxLines: null,
+                                            decoration:
+                                                const InputDecoration.collapsed(hintText: "Text"),
+                                            style: TextStyle(
+                                              fontSize: box.fontSize,
+                                              color: Color(box.color),
+                                            ),
+                                            onTap: () => setState(() => _selectedBoxId = box.id),
+                                            onChanged: (v) => _onTextChanged(box.id, v),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          if (_selectedBoxId != null)
+                            Builder(
+                              builder: (_) {
+                                final box = widget.document.boxById(_selectedBoxId!);
+                                if (box == null) return const SizedBox.shrink();
+                                final toolbarWidth = 220.0;
+                                final left = box.x * canvasSize.width;
+                                final top = (box.y * canvasSize.height) - 52;
+                                final clampedLeft =
+                                    left.clamp(6.0, canvasSize.width - toolbarWidth - 6.0);
+                                final clampedTop = top.clamp(6.0, canvasSize.height - 56.0);
+                                return Positioned(
+                                  left: clampedLeft,
+                                  top: clampedTop,
+                                  child: Container(
+                                    width: toolbarWidth,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: colors.surface,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: colors.onSurface.withOpacity(0.12)),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          blurRadius: 8,
+                                          color: colors.shadow.withOpacity(0.16),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            const Text("Text color",
+                                                style: TextStyle(fontSize: 12)),
+                                            const Spacer(),
+                                            IconButton(
+                                              tooltip: "Delete box",
+                                              icon: const Icon(Icons.delete_outline, size: 16),
+                                              onPressed: () => _deleteTextBox(box.id),
+                                            ),
+                                            IconButton(
+                                              tooltip: "Close toolbar",
+                                              icon: const Icon(Icons.close, size: 16),
+                                              onPressed: () =>
+                                                  setState(() => _selectedBoxId = null),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 6,
+                                          children: widget.textPalette
+                                              .map(
+                                                (c) => GestureDetector(
+                                                  onTap: () {
+                                                    _updateDoc(
+                                                      widget.document.updateTextBox(
+                                                        box.id,
+                                                        color: c.value,
+                                                      ),
+                                                    );
+                                                  },
+                                                  child: Container(
+                                                    width: 18,
+                                                    height: 18,
+                                                    decoration: BoxDecoration(
+                                                      color: c,
+                                                      shape: BoxShape.circle,
+                                                      border: Border.all(
+                                                        color: box.color == c.value
+                                                            ? colors.primary
+                                                            : colors.outline,
+                                                        width: box.color == c.value ? 2 : 1,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              )
+                                              .toList(),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                )
-                                .toList(),
+                                );
+                              },
+                            ),
+                          Positioned(
+                            right: 12,
+                            bottom: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: colors.surface.withOpacity(0.86),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(color: colors.onSurface.withOpacity(0.08)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    widget.erasing
+                                        ? Icons.auto_fix_high_outlined
+                                        : Icons.brush_rounded,
+                                    size: 16,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    widget.textMode
+                                        ? "Type to add text box"
+                                        : "Draw with pressure (use pen for best results)",
+                                    style: TextStyle(
+                                      color: colors.onSurfaceVariant,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  );
-                },
-              ),
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: colors.surface.withOpacity(0.86),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: colors.onSurface.withOpacity(0.08)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.erasing ? Icons.auto_fix_high_outlined : Icons.brush_rounded,
-                      size: 16,
-                      color: colors.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.textMode
-                          ? "Double-tap to add text box"
-                          : "Draw with pressure (use pen for best results)",
-                      style: TextStyle(
-                        color: colors.onSurfaceVariant,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ],
+          ),
         );
       },
     );
@@ -1302,19 +1497,27 @@ class _CanvasGridPainter extends CustomPainter {
 
 class CanvasDocumentData {
   static const storageType = "canvas-v1";
+  static const double defaultWidth = 1800;
+  static const double defaultHeight = 1200;
   final List<CanvasStroke> strokes;
   final List<CanvasTextBox> textBoxes;
+  final double width;
+  final double height;
   final String type;
 
   CanvasDocumentData({
     required this.strokes,
     required this.textBoxes,
+    required this.width,
+    required this.height,
     this.type = storageType,
   });
 
   factory CanvasDocumentData.empty() => CanvasDocumentData(
         strokes: const [],
         textBoxes: const [],
+        width: defaultWidth,
+        height: defaultHeight,
       );
 
   factory CanvasDocumentData.fromJson(Map<String, dynamic> json) {
@@ -1326,6 +1529,8 @@ class CanvasDocumentData {
       textBoxes: (json['textBoxes'] as List<dynamic>? ?? [])
           .map((s) => CanvasTextBox.fromJson(Map<String, dynamic>.from(s)))
           .toList(),
+      width: (json['width'] as num?)?.toDouble() ?? defaultWidth,
+      height: (json['height'] as num?)?.toDouble() ?? defaultHeight,
     );
   }
 
@@ -1345,6 +1550,8 @@ class CanvasDocumentData {
           color: Colors.black.value,
         ),
       ],
+      width: defaultWidth,
+      height: defaultHeight,
     );
   }
 
@@ -1352,12 +1559,16 @@ class CanvasDocumentData {
         "type": storageType,
         "strokes": strokes.map((e) => e.toJson()).toList(),
         "textBoxes": textBoxes.map((e) => e.toJson()).toList(),
+        "width": width,
+        "height": height,
       };
 
   CanvasDocumentData addStroke(CanvasStroke stroke) {
     return CanvasDocumentData(
       strokes: [...strokes, stroke],
       textBoxes: textBoxes,
+      width: width,
+      height: height,
     );
   }
 
@@ -1366,6 +1577,8 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes.sublist(0, strokes.length - 1),
       textBoxes: textBoxes,
+      width: width,
+      height: height,
     );
   }
 
@@ -1373,6 +1586,8 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes,
       textBoxes: [...textBoxes, box],
+      width: width,
+      height: height,
     );
   }
 
@@ -1403,6 +1618,8 @@ class CanvasDocumentData {
                 : b,
           )
           .toList(),
+      width: this.width,
+      height: this.height,
     );
   }
 
@@ -1418,6 +1635,45 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes,
       textBoxes: textBoxes.where((b) => b.id != id).toList(),
+      width: width,
+      height: height,
+    );
+  }
+
+  CanvasDocumentData resize(double nextWidth, double nextHeight) {
+    if (nextWidth == width && nextHeight == height) return this;
+    final scaleX = width / nextWidth;
+    final scaleY = height / nextHeight;
+    return CanvasDocumentData(
+      strokes: strokes
+          .map(
+            (s) => CanvasStroke(
+              color: Color(s.color),
+              width: s.width,
+              points: s.points
+                  .map(
+                    (p) => CanvasPoint(
+                      p.x * scaleX,
+                      p.y * scaleY,
+                      p.pressure,
+                    ),
+                  )
+                  .toList(),
+            ),
+          )
+          .toList(),
+      textBoxes: textBoxes
+          .map(
+            (b) => b.copyWith(
+              x: b.x * scaleX,
+              y: b.y * scaleY,
+              width: b.width * scaleX,
+              height: b.height * scaleY,
+            ),
+          )
+          .toList(),
+      width: nextWidth,
+      height: nextHeight,
     );
   }
 

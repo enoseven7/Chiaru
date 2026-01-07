@@ -124,6 +124,54 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
     );
   }
 
+  Future<void> _deleteSubject(Subject subject) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Subject?"),
+            content: const Text("All topics and notes inside it will be removed."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await subjectService.deleteSubject(subject.id);
+    await _loadSubjects();
+  }
+
+  Future<void> _deleteTopic(Topic topic) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Topic?"),
+            content: const Text("All notes inside this topic will also be deleted."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await topicService.deleteTopic(topic.id);
+    await _loadTopics(topic.subjectId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentSubjectId = (subjects.isNotEmpty && selectedSubject < subjects.length)
@@ -156,6 +204,7 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
                   subjects: subjects,
                   selectedIndex: selectedSubject,
                   addSubject: _addSubject,
+                  onDelete: _deleteSubject,
                   onSelect: (i) async {
                     setState(() {
                       selectedSubject = i;
@@ -188,6 +237,7 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
                   subjectId: currentSubjectId,
                   selectedIndex: selectedTopic,
                   addTopic: _addTopic,
+                  onDelete: _deleteTopic,
                   onSelect: (i) {
                     if (i >= topics.length) return;
                     setState(() {

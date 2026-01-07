@@ -61,6 +61,23 @@ class _NotesListPageState extends State<NotesListPage> {
     );
   }
 
+  Future<void> _showNoteContextMenu(Offset position, Note note) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "edit", child: Text("Edit")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "edit") {
+      _openNote(note);
+    } else if (selection == "delete") {
+      await noteService.deleteNote(note.id);
+      await _loadNotes();
+    }
+  }
+
   void _addNote() {
     Navigator.push(
       context,
@@ -156,50 +173,58 @@ class _NotesListPageState extends State<NotesListPage> {
                         ? "(Untitled note)"
                         : (text.length > 30 ? "${text.substring(0, 30)}..." : text));
 
-                return ListTile(
-                  leading: const Icon(Icons.note_alt),
-                  title: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Colors.grey.shade600),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.drive_file_rename_outline),
-                    tooltip: "Rename",
-                    onPressed: () async {
-                      final controller = TextEditingController(text: titles[note.id] ?? title);
-                      final newName = await showDialog<String>(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          title: const Text("Rename note"),
-                          content: TextField(
-                            controller: controller,
-                            decoration: const InputDecoration(labelText: "Note title"),
-                            autofocus: true,
-                          ),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, controller.text.trim()),
-                              child: const Text("Save"),
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTapDown: (details) =>
+                      _showNoteContextMenu(details.globalPosition, note),
+                  child: ListTile(
+                    leading: const Icon(Icons.note_alt),
+                    title: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.drive_file_rename_outline),
+                      tooltip: "Rename",
+                      onPressed: () async {
+                        final controller = TextEditingController(text: titles[note.id] ?? title);
+                        final newName = await showDialog<String>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text("Rename note"),
+                            content: TextField(
+                              controller: controller,
+                              decoration: const InputDecoration(labelText: "Note title"),
+                              autofocus: true,
                             ),
-                          ],
-                        ),
-                      );
-                      if (newName != null && newName.isNotEmpty) {
-                        await noteTitleService.saveTitle(note.id, newName);
-                        await _loadNotes();
-                      }
-                    },
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text("Cancel"),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, controller.text.trim()),
+                                child: const Text("Save"),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (newName != null && newName.isNotEmpty) {
+                          await noteTitleService.saveTitle(note.id, newName);
+                          await _loadNotes();
+                        }
+                      },
+                    ),
+                    onTap: () => _openNote(note),
+                    onLongPress: () => _showNoteMenu(note),
                   ),
-                  onTap: () => _openNote(note),
-                  onLongPress: () => _showNoteMenu(note),
                 );
               },
             ),

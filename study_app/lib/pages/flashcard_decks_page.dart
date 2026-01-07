@@ -27,6 +27,43 @@ class _FlashcardDecksPageState extends State<FlashcardDecksPage> {
     setState(() {});
   }
 
+  Future<void> _deleteDeck(FlashcardDeck deck) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete deck?"),
+            content: Text("All cards in \"${deck.name}\" will be removed."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await flashcardService.deleteDeck(deck.id);
+    await _load();
+  }
+
+  Future<void> _showDeckContextMenu(Offset position, FlashcardDeck deck) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "delete") {
+      await _deleteDeck(deck);
+    }
+  }
+
   void _addDeck() async {
     final c = TextEditingController();
     await showDialog(
@@ -64,13 +101,18 @@ class _FlashcardDecksPageState extends State<FlashcardDecksPage> {
         itemCount: decks.length,
         itemBuilder: (_, i) {
           final deck = decks[i];
-          return ListTile(
-            title: Text(deck.name),
-            trailing: Icon(Icons.arrow_forward_ios),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => FlashcardsEditorPage(deck: deck),
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (details) =>
+                _showDeckContextMenu(details.globalPosition, deck),
+            child: ListTile(
+              title: Text(deck.name),
+              trailing: Icon(Icons.arrow_forward_ios),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FlashcardsEditorPage(deck: deck),
+                ),
               ),
             ),
           );

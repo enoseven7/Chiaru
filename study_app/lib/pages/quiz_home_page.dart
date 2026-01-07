@@ -138,6 +138,54 @@ class _QuizHomePageState extends State<QuizHomePage> {
     );
   }
 
+  Future<void> _deleteSubject(Subject subject) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Subject?"),
+            content: const Text("All topics and quizzes inside it will be removed."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await subjectService.deleteSubject(subject.id);
+    await _loadSubjects();
+  }
+
+  Future<void> _deleteTopic(Topic topic) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Topic?"),
+            content: const Text("All quizzes inside this topic will also be deleted."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await topicService.deleteTopic(topic.id);
+    await _loadTopics(topic.subjectId);
+  }
+
   Future<void> _addQuiz() async {
     if (topics.isEmpty || selectedTopic >= topics.length) return;
     final topicId = topics[selectedTopic].id;
@@ -534,6 +582,26 @@ class _QuizHomePageState extends State<QuizHomePage> {
     }
   }
 
+  Future<void> _showQuizContextMenu(Offset position, Quiz quiz) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "edit", child: Text("Edit")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "edit") {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
+      );
+      await _loadQuizzes(quiz.topicId);
+    } else if (selection == "delete") {
+      await _deleteQuiz(quiz);
+    }
+  }
+
   Widget _buildQuizzesList(int currentTopicId) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -549,49 +617,54 @@ class _QuizHomePageState extends State<QuizHomePage> {
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, i) {
         final quiz = quizzes[i];
-        return Container(
-          decoration: BoxDecoration(
-            color: colors.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.onSurface.withOpacity(0.08)),
-          ),
-          child: ListTile(
-            title: Text(
-              quiz.title,
-              style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onSecondaryTapDown: (details) =>
+              _showQuizContextMenu(details.globalPosition, quiz),
+          child: Container(
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colors.onSurface.withOpacity(0.08)),
             ),
-            subtitle: Text(
-              quiz.description ?? '',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            child: ListTile(
+              title: Text(
+                quiz.title,
+                style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                quiz.description ?? '',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  IconButton(
+                    tooltip: "Export",
+                    icon: const Icon(Icons.file_download_outlined),
+                    onPressed: () => _exportQuiz(quiz),
+                  ),
+                  IconButton(
+                    tooltip: "Edit",
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
+                    ).then((_) => _loadQuizzes(quiz.topicId)),
+                  ),
+                  IconButton(
+                    tooltip: "Delete",
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    onPressed: () => _deleteQuiz(quiz),
+                  ),
+                ],
+              ),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
+              ).then((_) => _loadQuizzes(quiz.topicId)),
             ),
-            trailing: Wrap(
-              spacing: 4,
-              children: [
-                IconButton(
-                  tooltip: "Export",
-                  icon: const Icon(Icons.file_download_outlined),
-                  onPressed: () => _exportQuiz(quiz),
-                ),
-                IconButton(
-                  tooltip: "Edit",
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
-                  ).then((_) => _loadQuizzes(quiz.topicId)),
-                ),
-                IconButton(
-                  tooltip: "Delete",
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () => _deleteQuiz(quiz),
-                ),
-              ],
-            ),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => QuizEditorPage(quiz: quiz)),
-            ).then((_) => _loadQuizzes(quiz.topicId)),
           ),
         );
       },
@@ -636,6 +709,7 @@ class _QuizHomePageState extends State<QuizHomePage> {
                     subjects: subjects,
                     selectedIndex: selectedSubject,
                     addSubject: _addSubject,
+                    onDelete: _deleteSubject,
                     onSelect: (i) async {
                       setState(() {
                         selectedSubject = i;
@@ -669,6 +743,7 @@ class _QuizHomePageState extends State<QuizHomePage> {
                     subjectId: currentSubjectId,
                     selectedIndex: selectedTopic,
                     addTopic: _addTopic,
+                    onDelete: _deleteTopic,
                     onSelect: (i) async {
                       if (i >= topics.length) return;
                       setState(() {

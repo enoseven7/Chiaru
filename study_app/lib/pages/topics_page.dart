@@ -98,6 +98,47 @@ class _TopicsPageState extends State<TopicsPage> {
     );
   }
 
+  Future<bool> _confirmDeleteTopic() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Topic?"),
+            content: const Text("All notes inside this topic will also be deleted."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _showTopicContextMenu(Offset position, Topic topic) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "rename", child: Text("Rename")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "rename") {
+      _renameTopic(topic);
+    } else if (selection == "delete") {
+      final confirm = await _confirmDeleteTopic();
+      if (confirm) {
+        await topicService.deleteTopic(topic.id);
+        await _loadTopics();
+      }
+    }
+  }
+
   void _renameTopic(Topic topic) {
     String name = topic.name;
 
@@ -190,14 +231,19 @@ class _TopicsPageState extends State<TopicsPage> {
                     await topicService.deleteTopic(topic.id);
                     await _loadTopics();
                   },
-                  child: Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.folder_open),
-                      title: Text(topic.name),
-                      textColor: Colors.white,
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _openTopic(topic),
-                      onLongPress: () => _showTopicMenu(topic),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapDown: (details) =>
+                        _showTopicContextMenu(details.globalPosition, topic),
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.folder_open),
+                        title: Text(topic.name),
+                        textColor: Colors.white,
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _openTopic(topic),
+                        onLongPress: () => _showTopicMenu(topic),
+                      ),
                     ),
                   ),
                 );

@@ -393,11 +393,14 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
           const SizedBox(height: 10),
           SizedBox(
             height: 130,
-            child: CustomPaint(
-              painter: _SparklinePainter(
-                data: _trendData,
-                color: colors.primary,
-                maxY: maxVal,
+            child: LayoutBuilder(
+              builder: (context, constraints) => CustomPaint(
+                size: Size(constraints.maxWidth, 130),
+                painter: _SparklinePainter(
+                  data: _trendData,
+                  color: colors.primary,
+                  maxY: maxVal,
+                ),
               ),
             ),
           ),

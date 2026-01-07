@@ -152,6 +152,54 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
     );
   }
 
+  Future<void> _deleteSubject(Subject subject) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Subject?"),
+            content: const Text("All topics and decks inside it will be removed."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await subjectService.deleteSubject(subject.id);
+    await _loadSubjects();
+  }
+
+  Future<void> _deleteTopic(Topic topic) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Topic?"),
+            content: const Text("All decks inside this topic will also be deleted."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    await topicService.deleteTopic(topic.id);
+    await _loadTopics(topic.subjectId);
+  }
+
   Future<void> _addDeck() async {
     if (topics.isEmpty || selectedTopic >= topics.length) return;
 
@@ -519,6 +567,34 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
     }
   }
 
+  Future<void> _showDeckContextMenu(Offset position, FlashcardDeck deck) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "review", child: Text("Review")),
+        PopupMenuItem(value: "edit", child: Text("Edit")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "review") {
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FlashcardReviewPage(deck: deck)),
+      );
+    } else if (selection == "edit") {
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FlashcardsEditorPage(deck: deck)),
+      );
+      await _loadDecks(deck.topicId);
+    } else if (selection == "delete") {
+      await _deleteDeck(deck);
+    }
+  }
+
   Future<void> _importDeckFromFile(int topicId) async {
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: "Import deck (.json)",
@@ -589,62 +665,67 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, i) {
         final deck = decks[i];
-        return Container(
-          decoration: BoxDecoration(
-            color: colors.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.onSurface.withOpacity(0.08)),
-          ),
-          child: ListTile(
-            title: Text(
-              deck.name,
-              style: textTheme.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: colors.onSurface,
-              ),
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onSecondaryTapDown: (details) =>
+              _showDeckContextMenu(details.globalPosition, deck),
+          child: Container(
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colors.onSurface.withOpacity(0.08)),
             ),
-            subtitle: Text(
-              "Deck ID: ${deck.id}",
-              style: textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
+            child: ListTile(
+              title: Text(
+                deck.name,
+                style: textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: colors.onSurface,
+                ),
               ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: "Review",
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => FlashcardReviewPage(deck: deck),
+              subtitle: Text(
+                "Deck ID: ${deck.id}",
+                style: textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: "Review",
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FlashcardReviewPage(deck: deck),
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  tooltip: "Edit",
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => FlashcardsEditorPage(deck: deck),
-                    ),
-                  ).then((_) => _loadDecks(deck.topicId)),
-                ),
-                IconButton(
-                  tooltip: "Delete",
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () => _deleteDeck(deck),
-                ),
-              ],
-            ),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => FlashcardsEditorPage(deck: deck),
+                  IconButton(
+                    tooltip: "Edit",
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FlashcardsEditorPage(deck: deck),
+                      ),
+                    ).then((_) => _loadDecks(deck.topicId)),
+                  ),
+                  IconButton(
+                    tooltip: "Delete",
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    onPressed: () => _deleteDeck(deck),
+                  ),
+                ],
               ),
-            ).then((_) => _loadDecks(deck.topicId)),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FlashcardsEditorPage(deck: deck),
+                ),
+              ).then((_) => _loadDecks(deck.topicId)),
+            ),
           ),
         );
       },
@@ -689,6 +770,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                     subjects: subjects,
                     selectedIndex: selectedSubject,
                     addSubject: _addSubject,
+                    onDelete: _deleteSubject,
                     onSelect: (i) async {
                       setState(() {
                         selectedSubject = i;
@@ -722,6 +804,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                     subjectId: currentSubjectId,
                     selectedIndex: selectedTopic,
                     addTopic: _addTopic,
+                    onDelete: _deleteTopic,
                     onSelect: (i) async {
                       if (i >= topics.length) return;
                       setState(() {

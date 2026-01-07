@@ -7,6 +7,7 @@ class SubjectsPanel extends StatelessWidget {
   final int selectedIndex;
   final Function(int) onSelect;
   final VoidCallback addSubject;
+  final ValueChanged<Subject>? onDelete;
 
   const SubjectsPanel({
     super.key,
@@ -14,7 +15,22 @@ class SubjectsPanel extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelect,
     required this.addSubject,
+    this.onDelete,
   });
+
+  Future<void> _showContextMenu(BuildContext context, Offset position, Subject subject) async {
+    if (onDelete == null) return;
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "delete") {
+      onDelete!(subject);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,24 +93,29 @@ class SubjectsPanel extends StatelessWidget {
                           : colors.onSurface.withValues(alpha: 0.08),
                     ),
                   ),
-                  child: ListTile(
-                    dense: true,
-                    visualDensity: const VisualDensity(vertical: -1),
-                    leading: Icon(
-                      Icons.book_outlined,
-                      size: 18,
-                      color: selected ? colors.primary : colors.onSurfaceVariant,
-                    ),
-                    title: Text(
-                      subject.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodyLarge?.copyWith(
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                        color: selected ? colors.primary : colors.onSurface,
-                        letterSpacing: 0.1,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapDown: (details) =>
+                        _showContextMenu(context, details.globalPosition, subject),
+                    child: ListTile(
+                      dense: true,
+                      visualDensity: const VisualDensity(vertical: -1),
+                      leading: Icon(
+                        Icons.book_outlined,
+                        size: 18,
+                        color: selected ? colors.primary : colors.onSurfaceVariant,
                       ),
+                      title: Text(
+                        subject.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodyLarge?.copyWith(
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                          color: selected ? colors.primary : colors.onSurface,
+                          letterSpacing: 0.1,
+                        ),
+                      ),
+                      onTap: () => onSelect(i),
                     ),
-                    onTap: () => onSelect(i),
                   ),
                 );
               },

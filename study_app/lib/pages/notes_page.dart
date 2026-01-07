@@ -101,6 +101,47 @@ class _NotesPageState extends State<NotesPage> {
     );
   }
 
+  Future<bool> _confirmDeleteSubject() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Delete Subject?"),
+            content: const Text("All topics and notes inside it will be removed."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _showSubjectContextMenu(Offset position, Subject subject) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "rename", child: Text("Rename")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "rename") {
+      _renameSubject(subject);
+    } else if (selection == "delete") {
+      final confirm = await _confirmDeleteSubject();
+      if (confirm) {
+        await subjectService.deleteSubject(subject.id);
+        await _loadSubjects();
+      }
+    }
+  }
+
   void _renameSubject(Subject subject) {
     String name = subject.name;
 
@@ -189,16 +230,21 @@ class _NotesPageState extends State<NotesPage> {
                     await subjectService.deleteSubject(subject.id);
                     await _loadSubjects();
                   },
-                  child: Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.book_outlined),
-                      title: Text(subject.name),
-                      textColor: Colors.white,
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _openSubject(subject),
-                      onLongPress: () => _showSubjectMenu(subject),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapDown: (details) =>
+                        _showSubjectContextMenu(details.globalPosition, subject),
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.book_outlined),
+                        title: Text(subject.name),
+                        textColor: Colors.white,
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _openSubject(subject),
+                        onLongPress: () => _showSubjectMenu(subject),
+                      ),
                     ),
-                  )
+                  ),
                 );
               },
             ),

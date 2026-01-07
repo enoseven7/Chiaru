@@ -259,6 +259,23 @@ class _FlashcardsEditorPageState extends State<FlashcardsEditorPage> {
     );
   }
 
+  Future<void> _showCardContextMenu(Offset position, Flashcard card) async {
+    final selection = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: const [
+        PopupMenuItem(value: "edit", child: Text("Edit")),
+        PopupMenuItem(value: "delete", child: Text("Delete")),
+      ],
+    );
+    if (selection == "edit") {
+      await _openCardEditor(card: card);
+    } else if (selection == "delete") {
+      await flashcardService.deleteFlashcard(card.id);
+      await _load();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -306,47 +323,52 @@ class _FlashcardsEditorPageState extends State<FlashcardsEditorPage> {
               itemCount: cards.length,
               itemBuilder: (_, i) {
                 final card = cards[i];
-                return ListTile(
-                  title: Text(card.front),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(card.back),
-                      if (card.imagePath != null)
-                        Text(
-                          "Image: ${File(card.imagePath!).uri.pathSegments.last}",
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      if (card.audioPath != null)
-                        Text(
-                          "Audio: ${File(card.audioPath!).uri.pathSegments.last}",
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                    ],
-                  ),
-                  trailing: Wrap(
-                    spacing: 4,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        tooltip: "Review from here",
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => FlashcardReviewPage(deck: widget.deck, startIndex: i),
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTapDown: (details) =>
+                      _showCardContextMenu(details.globalPosition, card),
+                  child: ListTile(
+                    title: Text(card.front),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(card.back),
+                        if (card.imagePath != null)
+                          Text(
+                            "Image: ${File(card.imagePath!).uri.pathSegments.last}",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        if (card.audioPath != null)
+                          Text(
+                            "Audio: ${File(card.audioPath!).uri.pathSegments.last}",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                      ],
+                    ),
+                    trailing: Wrap(
+                      spacing: 4,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.play_arrow_rounded),
+                          tooltip: "Review from here",
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => FlashcardReviewPage(deck: widget.deck, startIndex: i),
+                            ),
                           ),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () async {
-                          await flashcardService.deleteFlashcard(card.id);
-                          await _load();
-                        },
-                      ),
-                    ],
+                        IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: () async {
+                            await flashcardService.deleteFlashcard(card.id);
+                            await _load();
+                          },
+                        ),
+                      ],
+                    ),
+                    onTap: () => _openCardEditor(card: card),
                   ),
-                  onTap: () => _openCardEditor(card: card),
                 );
               },
             ),
