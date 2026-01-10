@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 
@@ -12,6 +13,13 @@ import '../services/quiz_service.dart';
 import '../models/quiz_question.dart';
 
 class AiGenerationService {
+  http.Client _buildClient({required bool allowBadCertificates}) {
+    if (!allowBadCertificates) return http.Client();
+    final httpClient = HttpClient()
+      ..badCertificateCallback = (cert, host, port) => true;
+    return IOClient(httpClient);
+  }
+
   Future<String> _callModel({
     required TeachSettings settings,
     required String prompt,
@@ -30,22 +38,30 @@ class AiGenerationService {
               ? settings.cloudEndpoint
               : 'https://api.openai.com/v1/chat/completions',
         );
-        final resp = await http.post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-          },
-          body: jsonEncode({
-            'model': model,
-            'messages': [
-              {'role': 'system', 'content': 'You are a concise study helper.'},
-              {'role': 'user', 'content': prompt},
-            ],
-            'temperature': 0.4,
-            if (maxTokens != null) 'max_tokens': maxTokens,
-          }),
+        final client = _buildClient(
+          allowBadCertificates: settings.cloudEndpoint.isNotEmpty,
         );
+        http.Response resp;
+        try {
+          resp = await client.post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {'role': 'system', 'content': 'You are a concise study helper.'},
+                {'role': 'user', 'content': prompt},
+              ],
+              'temperature': 0.4,
+              if (maxTokens != null) 'max_tokens': maxTokens,
+            }),
+          );
+        } finally {
+          client.close();
+        }
         if (resp.statusCode >= 400) {
           throw Exception("Cloud request failed (${resp.statusCode}): ${resp.body}");
         }

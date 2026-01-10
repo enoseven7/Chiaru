@@ -1,11 +1,20 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../main.dart';
 import '../models/teach_settings.dart';
 
 class TeachService {
+  http.Client _buildClient({required bool allowBadCertificates}) {
+    if (!allowBadCertificates) return http.Client();
+    final httpClient = HttpClient()
+      ..badCertificateCallback = (cert, host, port) => true;
+    return IOClient(httpClient);
+  }
+
   Future<TeachSettings> loadSettings() async {
     final existing = await isar.collection<TeachSettings>().get(0);
     if (existing != null) return existing;
@@ -49,21 +58,29 @@ Follow-ups: 2-3 suggested questions.
             ? endpointOverride
             : 'https://api.openai.com/v1/chat/completions';
         final uri = Uri.parse(base);
-        final resp = await http.post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $apiKey',
-          },
-          body: jsonEncode({
-            'model': model,
-            'messages': [
-              {'role': 'system', 'content': 'You are a concise tutor.'},
-              {'role': 'user', 'content': prompt},
-            ],
-            'temperature': 0.4,
-          }),
+        final client = _buildClient(
+          allowBadCertificates: endpointOverride != null && endpointOverride.isNotEmpty,
         );
+        http.Response resp;
+        try {
+          resp = await client.post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {'role': 'system', 'content': 'You are a concise tutor.'},
+                {'role': 'user', 'content': prompt},
+              ],
+              'temperature': 0.4,
+            }),
+          );
+        } finally {
+          client.close();
+        }
         if (resp.statusCode >= 400) {
           return "Cloud request failed (${resp.statusCode}): ${resp.body}";
         }

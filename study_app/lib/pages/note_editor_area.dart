@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -8,6 +9,7 @@ import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../models/note.dart';
 import '../services/note_service.dart';
+import '../services/windows_pen_input.dart';
 
 class NoteEditorArea extends StatefulWidget {
   final int subjectId;
@@ -37,6 +39,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   bool _usingEraser = false;
   bool _textMode = false;
   bool _canvasView = true;
+  bool _allowTouchDraw = false;
   final List<Color> _penPalette = const [
     Colors.blue,
     Colors.red,
@@ -461,6 +464,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                     penWidth: _penWidth,
                     erasing: _usingEraser,
                     textMode: _textMode,
+                    allowTouchDraw: _allowTouchDraw,
                     palette: _penPalette,
                     onColorSelected: (c) => setState(() {
                       _usingEraser = false;
@@ -469,6 +473,8 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                     onWidthChanged: (v) => setState(() => _penWidth = v),
                     onEraserToggled: () => setState(() => _usingEraser = !_usingEraser),
                     onTextModeToggled: () => setState(() => _textMode = !_textMode),
+                    onTouchDrawToggled: () =>
+                        setState(() => _allowTouchDraw = !_allowTouchDraw),
                     onUndo: () => setState(() => _canvas = _canvas.removeLastStroke()),
                     onClearAll: () => setState(() => _canvas = CanvasDocumentData.empty()),
                   ),
@@ -482,6 +488,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                         strokeWidth: _penWidth,
                         erasing: _usingEraser,
                         textMode: _textMode,
+                        allowTouchDraw: _allowTouchDraw,
                         textPalette: _penPalette,
                         onChanged: (doc) => setState(() => _canvas = doc),
                       ),
@@ -730,11 +737,13 @@ class _CanvasToolbar extends StatelessWidget {
   final double penWidth;
   final bool erasing;
   final bool textMode;
+  final bool allowTouchDraw;
   final List<Color> palette;
   final ValueChanged<Color> onColorSelected;
   final ValueChanged<double> onWidthChanged;
   final VoidCallback onEraserToggled;
   final VoidCallback onTextModeToggled;
+  final VoidCallback onTouchDrawToggled;
   final VoidCallback onUndo;
   final VoidCallback onClearAll;
 
@@ -743,11 +752,13 @@ class _CanvasToolbar extends StatelessWidget {
     required this.penWidth,
     required this.erasing,
     required this.textMode,
+    required this.allowTouchDraw,
     required this.palette,
     required this.onColorSelected,
     required this.onWidthChanged,
     required this.onEraserToggled,
     required this.onTextModeToggled,
+    required this.onTouchDrawToggled,
     required this.onUndo,
     required this.onClearAll,
   });
@@ -804,6 +815,12 @@ class _CanvasToolbar extends StatelessWidget {
                 icon: Icon(textMode ? Icons.text_fields : Icons.add_comment_outlined, size: 18),
                 label: Text(textMode ? "Text mode" : "Add text"),
               ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: const Text("Touch draw"),
+                selected: allowTouchDraw,
+                onSelected: (_) => onTouchDrawToggled(),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -845,6 +862,7 @@ class _CanvasBoard extends StatefulWidget {
   final double strokeWidth;
   final bool erasing;
   final bool textMode;
+  final bool allowTouchDraw;
   final List<Color> textPalette;
   final ValueChanged<CanvasDocumentData> onChanged;
 
@@ -855,6 +873,7 @@ class _CanvasBoard extends StatefulWidget {
     required this.strokeWidth,
     required this.erasing,
     required this.textMode,
+    required this.allowTouchDraw,
     required this.textPalette,
     required this.onChanged,
   });
@@ -865,11 +884,18 @@ class _CanvasBoard extends StatefulWidget {
 
 class _CanvasBoardState extends State<_CanvasBoard> {
   CanvasStroke? _activeStroke;
+  final ValueNotifier<int> _repaintSignal = ValueNotifier<int>(0);
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
   final FocusNode _canvasFocusNode = FocusNode();
   final ScrollController _horizontalController = ScrollController();
   final ScrollController _verticalController = ScrollController();
+  final GlobalKey _canvasKey = GlobalKey();
+  int? _activePointerId;
+  Offset? _lastStrokePointPos;
+  bool _scrollLocked = false;
+  bool _penGestureActive = false;
+  StreamSubscription<WindowsPenEvent>? _penSubscription;
   String? _draggingId;
   Offset _dragStartBoxPos = Offset.zero;
   Offset _dragAccum = Offset.zero;
@@ -900,10 +926,18 @@ class _CanvasBoardState extends State<_CanvasBoard> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _penSubscription = WindowsPenInput.instance.events.listen(_handlePenEvent);
+  }
+
+  @override
   void dispose() {
     _horizontalController.dispose();
     _verticalController.dispose();
     _canvasFocusNode.dispose();
+    _repaintSignal.dispose();
+    _penSubscription?.cancel();
     for (final c in _controllers.values) {
       c.dispose();
     }
@@ -977,7 +1011,14 @@ class _CanvasBoardState extends State<_CanvasBoard> {
   }
 
   void _startStroke(PointerDownEvent event, Size size) {
+    if (!_shouldHandlePointer(event)) return;
+    if (_activePointerId != null) return;
     if (widget.textMode) return;
+    _activePointerId = event.pointer;
+    _lastStrokePointPos = event.localPosition;
+    if (!_scrollLocked) {
+      setState(() => _scrollLocked = true);
+    }
     final norm = _normalize(event.localPosition, size);
     if (widget.erasing) {
       _activeStroke = null;
@@ -993,6 +1034,13 @@ class _CanvasBoardState extends State<_CanvasBoard> {
   }
 
   void _extendStroke(PointerMoveEvent event, Size size) {
+    if (_activePointerId != event.pointer) return;
+    if (!_shouldHandlePointer(event)) return;
+    if (_lastStrokePointPos != null &&
+        (event.localPosition - _lastStrokePointPos!).distance < 1.5) {
+      return;
+    }
+    _lastStrokePointPos = event.localPosition;
     if (widget.erasing) {
       _eraseAt(_normalize(event.localPosition, size));
       return;
@@ -1000,10 +1048,16 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     if (_activeStroke == null || widget.textMode) return;
     final norm = _normalize(event.localPosition, size);
     _maybeExpandCanvas(event.localPosition, size);
-    setState(() => _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _pressure(event))));
+    _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _pressure(event)));
+    _repaintSignal.value += 1;
   }
 
   void _endStroke() {
+    _activePointerId = null;
+    _lastStrokePointPos = null;
+    if (_scrollLocked) {
+      setState(() => _scrollLocked = false);
+    }
     if (_activeStroke == null) return;
     if (_activeStroke!.points.length > 1) {
       _updateDoc(widget.document.addStroke(_activeStroke!));
@@ -1132,6 +1186,110 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     return ((p - minP) / (maxP - minP)).clamp(0.35, 1.2);
   }
 
+  bool _shouldHandlePointer(PointerEvent event) {
+    if (_penGestureActive) return false;
+    if (event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus ||
+        event.kind == PointerDeviceKind.mouse) {
+      return true;
+    }
+    if (event.kind == PointerDeviceKind.touch) {
+      return widget.allowTouchDraw || _isStylusTouch(event);
+    }
+    return false;
+  }
+
+  void _handlePenEvent(WindowsPenEvent event) {
+    if (!mounted) return;
+    final renderBox = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    final size = _lastCanvasSize;
+    if (renderBox == null || size == null) return;
+    final local = renderBox.globalToLocal(Offset(event.x, event.y));
+
+    if (event.type == "down") {
+      _penGestureActive = true;
+      _startPenStroke(local, size, event.pressure, event.eraser);
+    } else if (event.type == "move") {
+      if (_penGestureActive) {
+        _extendPenStroke(local, size, event.pressure, event.eraser);
+      }
+    } else {
+      _endPenStroke();
+      _penGestureActive = false;
+    }
+  }
+
+  void _startPenStroke(Offset localPosition, Size size, double pressure, bool eraser) {
+    if (widget.textMode) return;
+    if (!_scrollLocked) {
+      setState(() => _scrollLocked = true);
+    }
+    _lastStrokePointPos = localPosition;
+    final norm = _normalize(localPosition, size);
+    if (widget.erasing || eraser) {
+      _activeStroke = null;
+      _eraseAt(norm);
+      return;
+    }
+    final stroke = CanvasStroke(
+      color: widget.penColor,
+      width: widget.strokeWidth,
+      points: [CanvasPoint(norm.dx, norm.dy, _normalizePressure(pressure))],
+    );
+    setState(() => _activeStroke = stroke);
+  }
+
+  void _extendPenStroke(Offset localPosition, Size size, double pressure, bool eraser) {
+    if (widget.erasing || eraser) {
+      _eraseAt(_normalize(localPosition, size));
+      return;
+    }
+    if (_activeStroke == null || widget.textMode) return;
+    if (_lastStrokePointPos != null &&
+        (localPosition - _lastStrokePointPos!).distance < 1.5) {
+      return;
+    }
+    _lastStrokePointPos = localPosition;
+    final norm = _normalize(localPosition, size);
+    _maybeExpandCanvas(localPosition, size);
+    _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _normalizePressure(pressure)));
+    _repaintSignal.value += 1;
+  }
+
+  void _endPenStroke() {
+    _lastStrokePointPos = null;
+    if (_scrollLocked) {
+      setState(() => _scrollLocked = false);
+    }
+    if (_activeStroke == null) return;
+    if (_activeStroke!.points.length > 1) {
+      _updateDoc(widget.document.addStroke(_activeStroke!));
+    }
+    setState(() => _activeStroke = null);
+  }
+
+  double _normalizePressure(double pressure) {
+    if (pressure <= 0.0) return 1.0;
+    return pressure.clamp(0.35, 1.2);
+  }
+
+  bool _isStylusTouch(PointerEvent event) {
+    if (event.kind != PointerDeviceKind.touch) return false;
+    final stylusButtons = kPrimaryStylusButton | kSecondaryStylusButton;
+    if ((event.buttons & stylusButtons) != 0) return true;
+
+    final pressureRange = event.pressureMax - event.pressureMin;
+    final hasPressure = pressureRange > 0.05 && event.pressure > 0.0;
+    final radius = event.radiusMajor;
+    final size = event.size;
+    final contact = radius > 0 ? radius : (size > 0 ? size : 0.0);
+    final smallContact = contact > 0 ? contact <= 6.0 : false;
+
+    if (smallContact && hasPressure) return true;
+    if (contact == 0.0 && pressureRange > 0.2 && event.pressureMax > 1.0) return true;
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -1156,6 +1314,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
               child: SingleChildScrollView(
                 controller: _verticalController,
                 scrollDirection: Axis.vertical,
+                physics: _scrollLocked ? const NeverScrollableScrollPhysics() : null,
                 child: Scrollbar(
                   controller: _horizontalController,
                   notificationPredicate: (notification) =>
@@ -1163,6 +1322,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                   child: SingleChildScrollView(
                     controller: _horizontalController,
                     scrollDirection: Axis.horizontal,
+                    physics: _scrollLocked ? const NeverScrollableScrollPhysics() : null,
                     child: SizedBox(
                       width: canvasSize.width,
                       height: canvasSize.height,
@@ -1177,6 +1337,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(12),
                               child: Listener(
+                                key: _canvasKey,
                                 onPointerDown: (e) {
                                   _canvasFocusNode.requestFocus();
                                   _lastPointerPos = e.localPosition;
@@ -1188,16 +1349,21 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                                 },
                                 onPointerUp: (_) => _endStroke(),
                                 onPointerCancel: (_) => _endStroke(),
-                                child: CustomPaint(
-                                  painter: _CanvasPainter(
-                                    strokes: [
-                                      ...widget.document.strokes,
-                                      if (_activeStroke != null) _activeStroke!,
-                                    ],
+                                child: RepaintBoundary(
+                                  child: CustomPaint(
+                                    isComplex: true,
+                                    willChange: true,
+                                    painter: _CanvasPainter(
+                                      strokes: [
+                                        ...widget.document.strokes,
+                                        if (_activeStroke != null) _activeStroke!,
+                                      ],
+                                      repaint: _repaintSignal,
+                                    ),
+                                    foregroundPainter:
+                                        _CanvasGridPainter(colors.onSurface.withOpacity(0.06)),
+                                    child: Container(),
                                   ),
-                                  foregroundPainter:
-                                      _CanvasGridPainter(colors.onSurface.withOpacity(0.06)),
-                                  child: Container(),
                                 ),
                               ),
                             ),
@@ -1404,10 +1570,12 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                                     color: colors.onSurfaceVariant,
                                   ),
                                   const SizedBox(width: 6),
-                                  Text(
+                                      Text(
                                     widget.textMode
                                         ? "Type to add text box"
-                                        : "Draw with pressure (use pen for best results)",
+                                        : widget.allowTouchDraw
+                                            ? "Draw with pen or touch"
+                                            : "Pen-only drawing (enable touch to draw)",
                                     style: TextStyle(
                                       color: colors.onSurfaceVariant,
                                       fontSize: 12,
@@ -1435,7 +1603,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
 class _CanvasPainter extends CustomPainter {
   final List<CanvasStroke> strokes;
 
-  _CanvasPainter({required this.strokes});
+  _CanvasPainter({required this.strokes, Listenable? repaint}) : super(repaint: repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1446,6 +1614,7 @@ class _CanvasPainter extends CustomPainter {
         ..strokeWidth = stroke.width
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
+        ..isAntiAlias = true
         ..style = PaintingStyle.stroke;
 
       for (var i = 0; i < stroke.points.length - 1; i++) {
@@ -1453,11 +1622,9 @@ class _CanvasPainter extends CustomPainter {
         final p2 = stroke.points[i + 1];
         final pressureWidth1 = stroke.width * p1.pressure;
         final pressureWidth2 = stroke.width * p2.pressure;
-        final path = Path()
-          ..moveTo(p1.x * size.width, p1.y * size.height)
-          ..lineTo(p2.x * size.width, p2.y * size.height);
-        canvas.drawPath(
-          path,
+        canvas.drawLine(
+          Offset(p1.x * size.width, p1.y * size.height),
+          Offset(p2.x * size.width, p2.y * size.height),
           paint
             ..strokeWidth = (pressureWidth1 + pressureWidth2) / 2
             ..color = Color(stroke.color),

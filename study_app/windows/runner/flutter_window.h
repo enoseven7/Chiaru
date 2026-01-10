@@ -2,7 +2,10 @@
 #define RUNNER_FLUTTER_WINDOW_H_
 
 #include <flutter/dart_project.h>
+#include <flutter/encodable_value.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 
 #include <memory>
 
@@ -23,11 +26,24 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void SetupPenChannel();
+  void SendPenEvent(const flutter::EncodableMap& event);
+  void HandlePointerMessage(HWND window, UINT const message, WPARAM const wparam,
+                            LPARAM const lparam) noexcept;
+  void InstallChildSubclass(HWND child);
+  void RemoveChildSubclass();
+  static LRESULT CALLBACK PenSubclassProc(HWND hwnd, UINT message, WPARAM wparam,
+                                          LPARAM lparam, UINT_PTR subclass_id,
+                                          DWORD_PTR ref_data) noexcept;
+
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> pen_channel_;
+  HWND child_content_handle_ = nullptr;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
