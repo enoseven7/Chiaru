@@ -1,11 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 
 import '../models/note.dart';
 import '../services/note_service.dart';
@@ -27,6 +33,7 @@ class NoteEditorArea extends StatefulWidget {
 
 class _NoteEditorAreaState extends State<NoteEditorArea> {
   quill.QuillController? _quillController;
+  final FocusNode _richFocusNode = FocusNode();
   List<Note> _notes = [];
   Note? _activeNote;
   bool _isLoading = false;
@@ -75,6 +82,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       await _saveCurrentNote();
     }();
     _quillController?.dispose();
+    _richFocusNode.dispose();
     super.dispose();
   }
 
@@ -155,6 +163,279 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     }
   }
 
+  Future<String?> _pickFile({
+    required FileType type,
+    List<String>? allowedExtensions,
+  }) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: type,
+      allowedExtensions: allowedExtensions,
+    );
+    if (result != null && result.files.single.path != null) {
+      return result.files.single.path!;
+    }
+    return null;
+  }
+
+  Future<Directory> _noteMediaDir() async {
+    final note = _activeNote;
+    final root = await getApplicationDocumentsDirectory();
+    final folder = Directory(path.join(root.path, "note_media", "note_${note?.id ?? 0}"));
+    if (!await folder.exists()) {
+      await folder.create(recursive: true);
+    }
+    return folder;
+  }
+
+  Future<String> _copyToNoteMedia(String sourcePath, {String prefix = "media"}) async {
+    final folder = await _noteMediaDir();
+    final ext = path.extension(sourcePath);
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final dest = path.join(folder.path, "${prefix}_$stamp$ext");
+    return (await File(sourcePath).copy(dest)).path;
+  }
+
+  Future<double?> _imageAspectRatio(String imagePath) async {
+    try {
+      final bytes = await File(imagePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final ratio = image.width == 0 ? null : image.width / image.height;
+      image.dispose();
+      return ratio;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<String>> _renderPdfToImages(String pdfPath) async {
+    final folder = await _noteMediaDir();
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final bytes = await File(pdfPath).readAsBytes();
+    final doc = await PdfDocument.openData(bytes);
+    final outputs = <String>[];
+    try {
+      for (int pageIndex = 1; pageIndex <= doc.pagesCount; pageIndex++) {
+        final page = await doc.getPage(pageIndex);
+        try {
+          final maxSide = 1600.0;
+          final baseSide = max(page.width, page.height);
+          final scale = baseSide <= 0 ? 1.0 : min(2.0, maxSide / baseSide);
+          final targetWidth = max(1.0, (page.width * scale).roundToDouble());
+          final targetHeight = max(1.0, (page.height * scale).roundToDouble());
+          final image = await page.render(
+            width: targetWidth,
+            height: targetHeight,
+            format: PdfPageImageFormat.png,
+            backgroundColor: '#FFFFFF',
+          );
+          if (image == null) {
+            continue;
+          }
+          final fileName = "pdf_${stamp}_p${pageIndex.toString().padLeft(3, '0')}.png";
+          final outPath = path.join(folder.path, fileName);
+          await File(outPath).writeAsBytes(image.bytes, flush: true);
+          outputs.add(outPath);
+        } finally {
+          await page.close();
+        }
+      }
+    } finally {
+      await doc.close();
+    }
+    return outputs;
+  }
+
+  Future<void> _insertCanvasMedia({
+    required String filePath,
+    required String kind,
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    double? aspectRatio,
+  }) async {
+    if (_activeNote == null) return;
+    const imageWidth = 0.46;
+    const imageHeight = 0.32;
+    double nextWidth = width ?? imageWidth;
+    double nextHeight = height ?? imageHeight;
+    final ratio = (aspectRatio != null && aspectRatio > 0) ? aspectRatio : null;
+    if (ratio != null) {
+      if (width != null) {
+        nextHeight = width / ratio;
+      } else if (height != null) {
+        nextWidth = height * ratio;
+      } else {
+        nextHeight = nextWidth / ratio;
+      }
+    }
+    nextWidth = nextWidth.clamp(0.04, 0.98);
+    nextHeight = nextHeight.clamp(0.04, 0.98);
+    final nextX = (x ?? (0.5 - nextWidth / 2)).clamp(0.02, 0.98 - nextWidth);
+    final nextY = (y ?? (0.5 - nextHeight / 2)).clamp(0.02, 0.98 - nextHeight);
+    setState(() {
+      _canvas = _canvas.addMediaBox(
+        CanvasMediaBox(
+          id: _id(),
+          x: nextX,
+          y: nextY,
+          width: nextWidth,
+          height: nextHeight,
+          path: filePath,
+          kind: kind,
+          aspectRatio: ratio,
+        ),
+      );
+    });
+  }
+
+  Future<void> _insertCanvasImage() async {
+    final filePath = await _pickFile(type: FileType.image);
+    if (filePath == null) return;
+    final stored = await _copyToNoteMedia(filePath, prefix: "img");
+    final ratio = await _imageAspectRatio(stored);
+    await _insertCanvasMedia(
+      filePath: stored,
+      kind: CanvasMediaBox.kindImage,
+      aspectRatio: ratio,
+    );
+  }
+
+  Future<void> _insertCanvasPdf() async {
+    final filePath = await _pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (filePath == null) return;
+    final stored = await _copyToNoteMedia(filePath, prefix: "pdf");
+    try {
+      final images = await _renderPdfToImages(stored);
+      final count = images.length;
+      if (count == 0) {
+        throw Exception("No pages rendered.");
+      }
+      const startX = 0.06;
+      const gap = 0.04;
+      const targetWidth = 0.46;
+      var offsetY = 0.04;
+      for (int i = 0; i < count; i++) {
+        final ratio = await _imageAspectRatio(images[i]);
+        final estimatedHeight =
+            ratio == null ? 0.28 : (targetWidth / ratio).clamp(0.08, 0.9);
+        await _insertCanvasMedia(
+          filePath: images[i],
+          kind: CanvasMediaBox.kindImage,
+          x: startX,
+          y: offsetY,
+          width: targetWidth,
+          height: estimatedHeight,
+          aspectRatio: ratio,
+        );
+        offsetY += estimatedHeight + gap;
+      }
+    } catch (e, st) {
+      debugPrint("PDF import failed (canvas): $e\n$st");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to import PDF pages: $e")),
+      );
+    }
+  }
+
+  Future<void> _insertRichImage() async {
+    final controller = _quillController;
+    if (controller == null) return;
+    final filePath = await _pickFile(type: FileType.image);
+    if (filePath == null) return;
+    _richFocusNode.requestFocus();
+    final stored = await _copyToNoteMedia(filePath, prefix: "img");
+    final ratio = await _imageAspectRatio(stored);
+    final docLength = controller.document.length;
+    final selectionIndex = controller.selection.baseOffset;
+    final fallbackIndex = max(0, docLength - 1);
+    if (!_richFocusNode.hasFocus) {
+      controller.updateSelection(
+        TextSelection.collapsed(offset: fallbackIndex),
+        quill.ChangeSource.local,
+      );
+    }
+    final safeIndex = selectionIndex >= 0 ? min(selectionIndex, fallbackIndex) : fallbackIndex;
+    controller.replaceText(
+      safeIndex,
+      0,
+      quill.BlockEmbed.custom(
+        _ResizableImageEmbed(
+          source: stored,
+          width: _defaultRichImageWidth,
+          height: _defaultRichImageHeight,
+          aspectRatio: ratio,
+        ),
+      ),
+      null,
+    );
+    controller.updateSelection(
+      TextSelection.collapsed(offset: safeIndex + 1),
+      quill.ChangeSource.local,
+    );
+  }
+
+  Future<void> _insertRichPdf() async {
+    final controller = _quillController;
+    if (controller == null) return;
+    final filePath = await _pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (filePath == null) return;
+    _richFocusNode.requestFocus();
+    final stored = await _copyToNoteMedia(filePath, prefix: "pdf");
+    try {
+      final images = await _renderPdfToImages(stored);
+      if (images.isEmpty) {
+        throw Exception("No pages rendered.");
+      }
+      final docLength = controller.document.length;
+      final selectionIndex = controller.selection.baseOffset;
+      final fallbackIndex = max(0, docLength - 1);
+      if (!_richFocusNode.hasFocus) {
+        controller.updateSelection(
+          TextSelection.collapsed(offset: fallbackIndex),
+          quill.ChangeSource.local,
+        );
+      }
+      var insertIndex = selectionIndex >= 0 ? min(selectionIndex, fallbackIndex) : fallbackIndex;
+      for (final imgPath in images) {
+        final ratio = await _imageAspectRatio(imgPath);
+        controller.replaceText(
+          insertIndex,
+          0,
+          quill.BlockEmbed.custom(
+            _ResizableImageEmbed(
+              source: imgPath,
+              width: _defaultRichImageWidth,
+              height: _defaultRichImageHeight,
+              aspectRatio: ratio,
+            ),
+          ),
+          null,
+        );
+        insertIndex += 1;
+      }
+      controller.updateSelection(
+        TextSelection.collapsed(offset: insertIndex),
+        quill.ChangeSource.local,
+      );
+    } catch (e, st) {
+      debugPrint("PDF import failed (rich): $e\n$st");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to import PDF pages: $e")),
+      );
+    }
+  }
+
   Future<void> _loadNotesForTopic({bool selectNewest = false}) async {
     final topicId = widget.topicId;
     setState(() {
@@ -196,6 +477,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       _canvas = bundle.canvas;
       _initRichForNote(nextNote);
     });
+    await _ensureMediaAspectRatios();
   }
 
   Future<void> _saveCurrentNote() async {
@@ -238,6 +520,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       _canvas = bundle.canvas;
       _initRichForNote(note);
     });
+    await _ensureMediaAspectRatios();
   }
 
   Future<void> _deleteNote(Note note) async {
@@ -466,6 +749,8 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                     textMode: _textMode,
                     allowTouchDraw: _allowTouchDraw,
                     palette: _penPalette,
+                    onInsertImage: _insertCanvasImage,
+                    onInsertPdf: _insertCanvasPdf,
                     onColorSelected: (c) => setState(() {
                       _usingEraser = false;
                       _penColor = c;
@@ -501,6 +786,24 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
             Expanded(
               child: Column(
                 children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _insertRichImage,
+                        icon: const Icon(Icons.image_outlined),
+                        label: const Text("Insert image"),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _insertRichPdf,
+                        icon: const Icon(Icons.picture_as_pdf_outlined),
+                        label: const Text("Attach PDF"),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
                   quill.QuillSimpleToolbar(
                     controller: _quillController!,
                     config: const quill.QuillSimpleToolbarConfig(
@@ -516,10 +819,15 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                         border: Border.all(color: colors.onSurface.withOpacity(0.12)),
                       ),
                       child: quill.QuillEditor.basic(
-                        config: const quill.QuillEditorConfig(
-                          padding: EdgeInsets.all(12),
+                        config: quill.QuillEditorConfig(
+                          padding: const EdgeInsets.all(12),
+                          embedBuilders: const [
+                            _LocalImageEmbedBuilder(),
+                            _ResizableImageEmbedBuilder(),
+                          ],
                         ),
                         controller: _quillController!,
+                        focusNode: _richFocusNode,
                       ),
                     ),
                   ),
@@ -614,6 +922,34 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
         ],
       ),
     );
+  }
+}
+
+extension _NoteEditorMediaFix on _NoteEditorAreaState {
+  Future<void> _ensureMediaAspectRatios() async {
+    if (_canvas.mediaBoxes.isEmpty) return;
+    CanvasDocumentData next = _canvas;
+    var changed = false;
+    for (final media in _canvas.mediaBoxes) {
+      if (media.aspectRatio != null) continue;
+      if (!File(media.path).existsSync()) continue;
+      final ratio = await _imageAspectRatio(media.path);
+      if (ratio == null || ratio <= 0) continue;
+      final expectedHeight = (media.width / ratio).clamp(0.04, 1.0 - media.y);
+      if ((expectedHeight - media.height).abs() > 0.01) {
+        next = next.updateMediaBox(
+          media.id,
+          height: expectedHeight,
+          aspectRatio: ratio,
+        );
+      } else {
+        next = next.updateMediaBox(media.id, aspectRatio: ratio);
+      }
+      changed = true;
+    }
+    if (changed && mounted) {
+      setState(() => _canvas = next);
+    }
   }
 }
 
@@ -739,6 +1075,8 @@ class _CanvasToolbar extends StatelessWidget {
   final bool textMode;
   final bool allowTouchDraw;
   final List<Color> palette;
+  final VoidCallback onInsertImage;
+  final VoidCallback onInsertPdf;
   final ValueChanged<Color> onColorSelected;
   final ValueChanged<double> onWidthChanged;
   final VoidCallback onEraserToggled;
@@ -754,6 +1092,8 @@ class _CanvasToolbar extends StatelessWidget {
     required this.textMode,
     required this.allowTouchDraw,
     required this.palette,
+    required this.onInsertImage,
+    required this.onInsertPdf,
     required this.onColorSelected,
     required this.onWidthChanged,
     required this.onEraserToggled,
@@ -820,6 +1160,17 @@ class _CanvasToolbar extends StatelessWidget {
                 label: const Text("Touch draw"),
                 selected: allowTouchDraw,
                 onSelected: (_) => onTouchDrawToggled(),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: "Insert image",
+                onPressed: onInsertImage,
+                icon: const Icon(Icons.image_outlined),
+              ),
+              IconButton(
+                tooltip: "Insert PDF",
+                onPressed: onInsertPdf,
+                icon: const Icon(Icons.picture_as_pdf_outlined),
               ),
             ],
           ),
@@ -900,6 +1251,11 @@ class _CanvasBoardState extends State<_CanvasBoard> {
   Offset _dragStartBoxPos = Offset.zero;
   Offset _dragAccum = Offset.zero;
   String? _selectedBoxId;
+  String? _draggingMediaId;
+  Offset _dragStartMediaPos = Offset.zero;
+  Offset _dragMediaAccum = Offset.zero;
+  String? _selectedMediaId;
+  String? _resizingMediaId;
   Offset? _lastPointerPos;
   Size? _lastCanvasSize;
 
@@ -922,6 +1278,9 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     }
     if (_selectedBoxId != null && widget.document.boxById(_selectedBoxId!) == null) {
       _selectedBoxId = null;
+    }
+    if (_selectedMediaId != null && widget.document.mediaById(_selectedMediaId!) == null) {
+      _selectedMediaId = null;
     }
   }
 
@@ -1079,6 +1438,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
         CanvasDocumentData(
           strokes: next,
           textBoxes: widget.document.textBoxes,
+          mediaBoxes: widget.document.mediaBoxes,
           width: widget.document.width,
           height: widget.document.height,
         ),
@@ -1113,6 +1473,7 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     _maybeExpandCanvas(position, size);
     if (focus) {
       _selectedBoxId = id;
+      _selectedMediaId = null;
       _controllers.putIfAbsent(id, () => TextEditingController(text: initialText));
       final focusNode = _focusNodes.putIfAbsent(id, () => FocusNode());
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1139,13 +1500,105 @@ class _CanvasBoardState extends State<_CanvasBoard> {
     _updateDoc(widget.document.updateTextBox(id, text: value));
   }
 
+  void _startDragMedia(String id, Size size) {
+    final media = widget.document.mediaById(id);
+    if (media == null) return;
+    _draggingId = null;
+    _resizingMediaId = null;
+    _draggingMediaId = id;
+    _dragStartMediaPos = Offset(media.x, media.y);
+    _dragMediaAccum = Offset.zero;
+    _selectedMediaId = id;
+    _selectedBoxId = null;
+  }
+
+  void _onDragMedia(String id, Offset delta, Size size) {
+    if (_draggingMediaId != id) return;
+    _dragMediaAccum += Offset(delta.dx / size.width, delta.dy / size.height);
+    final startX = _dragStartMediaPos.dx;
+    final startY = _dragStartMediaPos.dy;
+    final media = widget.document.mediaById(id);
+    final width = media?.width ?? 0.2;
+    final height = media?.height ?? 0.2;
+    final nextX = (startX + _dragMediaAccum.dx).clamp(0.0, 1.0 - width);
+    final nextY = (startY + _dragMediaAccum.dy).clamp(0.0, 1.0 - height);
+    _updateDoc(widget.document.updateMediaBox(
+      id,
+      x: nextX,
+      y: nextY,
+    ));
+    final bottomRight = Offset(
+      (nextX + width) * size.width,
+      (nextY + height) * size.height,
+    );
+    _maybeExpandCanvas(bottomRight, size);
+  }
+
+  void _deleteMediaBox(String id) {
+    _updateDoc(widget.document.removeMediaBox(id));
+    setState(() {
+      if (_selectedMediaId == id) _selectedMediaId = null;
+      if (_draggingMediaId == id) _draggingMediaId = null;
+      if (_resizingMediaId == id) _resizingMediaId = null;
+    });
+  }
+
+  void _startResizeMedia(String id) {
+    final media = widget.document.mediaById(id);
+    if (media == null) return;
+    _resizingMediaId = id;
+    _selectedMediaId = id;
+    _selectedBoxId = null;
+  }
+
+  void _onResizeMedia(String id, DragUpdateDetails details, Size size) {
+    if (_resizingMediaId != id) return;
+    final media = widget.document.mediaById(id);
+    if (media == null) return;
+    const minSize = 0.02;
+    const sensitivity = 12.0;
+    final deltaW = details.delta.dx / size.width * sensitivity;
+    final deltaH = details.delta.dy / size.height * sensitivity;
+    double nextWidth = media.width;
+    double nextHeight = media.height;
+    final ratio = media.aspectRatio;
+    if (ratio != null && ratio > 0) {
+      final useWidth = deltaW.abs() >= deltaH.abs();
+      if (useWidth) {
+        nextWidth = (media.width + deltaW).clamp(minSize, 1.0 - media.x);
+        nextHeight = (nextWidth / ratio).clamp(minSize, 1.0 - media.y);
+      } else {
+        nextHeight = (media.height + deltaH).clamp(minSize, 1.0 - media.y);
+        nextWidth = (nextHeight * ratio).clamp(minSize, 1.0 - media.x);
+      }
+    } else {
+      nextWidth = (media.width + deltaW).clamp(minSize, 1.0 - media.x);
+      nextHeight = (media.height + deltaH).clamp(minSize, 1.0 - media.y);
+    }
+    _updateDoc(
+      widget.document.updateMediaBox(
+        id,
+        width: nextWidth,
+        height: nextHeight,
+      ),
+    );
+    final bottomRight = Offset(
+      (media.x + nextWidth) * size.width,
+      (media.y + nextHeight) * size.height,
+    );
+    _maybeExpandCanvas(bottomRight, size);
+  }
+
   void _startDragBox(String id, Size size) {
     final box = widget.document.boxById(id);
     if (box == null) return;
+    _draggingMediaId = null;
+    _resizingMediaId = null;
     _draggingId = id;
     _dragStartBoxPos = Offset(box.x, box.y);
     _dragAccum = Offset.zero;
     _selectedBoxId = id;
+    _selectedMediaId = null;
   }
 
   void _onDragBox(String id, Offset delta, Size size) {
@@ -1368,6 +1821,121 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                               ),
                             ),
                           ),
+                          ...widget.document.mediaBoxes.map(
+                            (media) {
+                              final boxSize = Size(
+                                media.width * canvasSize.width,
+                                media.height * canvasSize.height,
+                              );
+                              final isSelected = _selectedMediaId == media.id;
+                              final fileExists = File(media.path).existsSync();
+                              return Positioned(
+                                left: media.x * canvasSize.width,
+                                top: media.y * canvasSize.height,
+                                width: boxSize.width,
+                                height: boxSize.height,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () => setState(() {
+                                    _selectedMediaId = media.id;
+                                    _selectedBoxId = null;
+                                  }),
+                                  onPanStart: (_) => setState(() {
+                                    _startDragMedia(media.id, canvasSize);
+                                  }),
+                                  onPanUpdate: (details) =>
+                                      _onDragMedia(media.id, details.delta, canvasSize),
+                                  onPanEnd: (_) => setState(() => _draggingMediaId = null),
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.transparent,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Stack(
+                                      children: [
+                                        Positioned.fill(
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(10),
+                                            child: fileExists
+                                                ? FittedBox(
+                                                    fit: BoxFit.contain,
+                                                    child: DecoratedBox(
+                                                      decoration: BoxDecoration(
+                                                        border: Border.all(
+                                                          color: isSelected
+                                                              ? colors.primary
+                                                              : Colors.transparent,
+                                                          width: 1,
+                                                        ),
+                                                      ),
+                                                      child: Image.file(File(media.path)),
+                                                    ),
+                                                  )
+                                                : Center(
+                                                    child: Text(
+                                                      "Missing image",
+                                                      style: TextStyle(
+                                                        color: colors.onSurfaceVariant,
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          Positioned(
+                                            right: 6,
+                                            top: 6,
+                                            child: DecoratedBox(
+                                              decoration: BoxDecoration(
+                                                color: colors.surface.withOpacity(0.9),
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: colors.onSurface.withOpacity(0.12),
+                                                ),
+                                              ),
+                                              child: IconButton(
+                                                tooltip: "Remove",
+                                                icon: const Icon(Icons.close, size: 16),
+                                                onPressed: () => _deleteMediaBox(media.id),
+                                              ),
+                                            ),
+                                          ),
+                                        if (isSelected)
+                                          Positioned(
+                                            right: 4,
+                                            bottom: 4,
+                                            child: GestureDetector(
+                                              behavior: HitTestBehavior.opaque,
+                                              onPanStart: (_) => setState(() {
+                                                _startResizeMedia(media.id);
+                                              }),
+                                              onPanUpdate: (details) =>
+                                                  _onResizeMedia(media.id, details, canvasSize),
+                                              onPanEnd: (_) =>
+                                                  setState(() => _resizingMediaId = null),
+                                              child: Container(
+                                                width: 24,
+                                                height: 24,
+                                                decoration: BoxDecoration(
+                                                  color: colors.primary,
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: const Icon(
+                                                  Icons.open_in_full,
+                                                  size: 14,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                           ...widget.document.textBoxes.map(
                             (box) {
                               final controller =
@@ -1449,7 +2017,10 @@ class _CanvasBoardState extends State<_CanvasBoard> {
                                               fontSize: box.fontSize,
                                               color: Color(box.color),
                                             ),
-                                            onTap: () => setState(() => _selectedBoxId = box.id),
+                                            onTap: () => setState(() {
+                                              _selectedBoxId = box.id;
+                                              _selectedMediaId = null;
+                                            }),
                                             onChanged: (v) => _onTextChanged(box.id, v),
                                           ),
                                         ),
@@ -1662,12 +2233,342 @@ class _CanvasGridPainter extends CustomPainter {
   bool shouldRepaint(covariant _CanvasGridPainter oldDelegate) => false;
 }
 
+const double _defaultRichImageWidth = 360.0;
+const double _defaultRichImageHeight = 240.0;
+const String _resizableImageType = 'resizable-image';
+
+class _ResizableImageEmbed extends quill.CustomBlockEmbed {
+  _ResizableImageEmbed({
+    required String source,
+    required double width,
+    required double height,
+    double? aspectRatio,
+  }) : super(
+          _resizableImageType,
+          jsonEncode({
+            'source': source,
+            'width': width,
+            'height': height,
+            'aspectRatio': aspectRatio,
+          }),
+        );
+
+  static _ResizableImageEmbed? fromCustom(quill.CustomBlockEmbed custom) {
+    if (custom.type != _resizableImageType) return null;
+    final data = custom.data;
+    if (data is! String) return null;
+    Map<String, dynamic> decoded;
+    try {
+      decoded = jsonDecode(data) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+    final source = decoded['source']?.toString();
+    if (source == null || source.isEmpty) return null;
+    final width = (decoded['width'] as num?)?.toDouble() ?? _defaultRichImageWidth;
+    final height = (decoded['height'] as num?)?.toDouble() ?? _defaultRichImageHeight;
+    final ratio = (decoded['aspectRatio'] as num?)?.toDouble();
+    return _ResizableImageEmbed(
+      source: source,
+      width: width,
+      height: height,
+      aspectRatio: ratio,
+    );
+  }
+
+  Map<String, dynamic> _decoded() {
+    try {
+      return jsonDecode(data) as Map<String, dynamic>;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  String get source => _decoded()['source'] as String? ?? '';
+  double get width => (_decoded()['width'] as num?)?.toDouble() ?? _defaultRichImageWidth;
+  double get height => (_decoded()['height'] as num?)?.toDouble() ?? _defaultRichImageHeight;
+  double? get aspectRatio => (_decoded()['aspectRatio'] as num?)?.toDouble();
+
+  _ResizableImageEmbed copyWith({
+    double? width,
+    double? height,
+    double? aspectRatio,
+  }) {
+    return _ResizableImageEmbed(
+      source: source,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      aspectRatio: aspectRatio ?? this.aspectRatio,
+    );
+  }
+}
+
+class _LocalImageEmbedBuilder extends quill.EmbedBuilder {
+  const _LocalImageEmbedBuilder();
+
+  @override
+  String get key => 'image';
+
+  @override
+  Widget build(BuildContext context, quill.EmbedContext embedContext) {
+    final data = embedContext.node.value.data;
+    final source = data is String ? data : data.toString();
+    final uri = Uri.tryParse(source);
+    final isWindowsPath = RegExp(r'^[a-zA-Z]:\\').hasMatch(source);
+    final isFile = isWindowsPath ||
+        path.isAbsolute(source) ||
+        uri == null ||
+        uri.scheme.isEmpty ||
+        uri.scheme == 'file';
+    final pathValue = (uri != null && uri.scheme == 'file') ? uri.toFilePath() : source;
+    final file = File(pathValue);
+    if (isFile && !file.existsSync()) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          "Missing image",
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
+        final image = isFile
+            ? Image.file(file, fit: BoxFit.contain)
+            : Image.network(source, fit: BoxFit.contain);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: image,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ResizableImageEmbedBuilder extends quill.EmbedBuilder {
+  const _ResizableImageEmbedBuilder();
+
+  @override
+  String get key => 'custom';
+
+  @override
+  Widget build(BuildContext context, quill.EmbedContext embedContext) {
+    final data = embedContext.node.value.data;
+    _ResizableImageEmbed? embed;
+    if (data is String) {
+      try {
+        final custom = quill.CustomBlockEmbed.fromJsonString(data);
+        embed = _ResizableImageEmbed.fromCustom(custom);
+      } catch (_) {
+        embed = null;
+      }
+    } else if (data is Map) {
+      final source = data['source']?.toString();
+      if (source != null && source.isNotEmpty) {
+        embed = _ResizableImageEmbed(
+          source: source,
+          width: (data['width'] as num?)?.toDouble() ?? _defaultRichImageWidth,
+          height: (data['height'] as num?)?.toDouble() ?? _defaultRichImageHeight,
+          aspectRatio: (data['aspectRatio'] as num?)?.toDouble(),
+        );
+      }
+    }
+    if (embed == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          "Invalid image embed",
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+
+    final resolved = embed;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
+        final initWidth = min(resolved.width, maxWidth);
+        final ratio = resolved.aspectRatio ??
+            (resolved.height > 0 ? resolved.width / resolved.height : null);
+        final initHeight = ratio != null && ratio > 0
+            ? initWidth / ratio
+            : resolved.height;
+        return _ResizableImageEmbedWidget(
+          embedContext: embedContext,
+          embed: resolved,
+          maxWidth: maxWidth,
+          initialWidth: initWidth,
+          initialHeight: initHeight,
+        );
+      },
+    );
+  }
+}
+
+class _ResizableImageEmbedWidget extends StatefulWidget {
+  final quill.EmbedContext embedContext;
+  final _ResizableImageEmbed embed;
+  final double maxWidth;
+  final double initialWidth;
+  final double initialHeight;
+
+  const _ResizableImageEmbedWidget({
+    required this.embedContext,
+    required this.embed,
+    required this.maxWidth,
+    required this.initialWidth,
+    required this.initialHeight,
+  });
+
+  @override
+  State<_ResizableImageEmbedWidget> createState() =>
+      _ResizableImageEmbedWidgetState();
+}
+
+class _ResizableImageEmbedWidgetState
+    extends State<_ResizableImageEmbedWidget> {
+  late double _width;
+  late double _height;
+
+  @override
+  void initState() {
+    super.initState();
+    _width = widget.initialWidth;
+    _height = widget.initialHeight;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ResizableImageEmbedWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.embed.width != widget.embed.width ||
+        oldWidget.embed.height != widget.embed.height) {
+      _width = widget.initialWidth;
+      _height = widget.initialHeight;
+    }
+  }
+
+  void _commitSize(double width, double height) {
+    final controller = widget.embedContext.controller;
+    final offset = widget.embedContext.node.documentOffset;
+    final ratio = widget.embed.aspectRatio ??
+        (widget.embed.height > 0 ? widget.embed.width / widget.embed.height : null);
+    final updated = widget.embed.copyWith(
+      width: width,
+      height: height,
+      aspectRatio: ratio,
+    );
+    controller.replaceText(
+      offset,
+      1,
+      quill.BlockEmbed.custom(updated),
+      null,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final source = widget.embed.source;
+    final isWindowsPath = RegExp(r'^[a-zA-Z]:\\').hasMatch(source);
+    final uri = Uri.tryParse(source);
+    final isFile = isWindowsPath ||
+        path.isAbsolute(source) ||
+        uri == null ||
+        uri.scheme.isEmpty ||
+        uri.scheme == 'file';
+    final rawPath = (uri != null && uri.scheme == 'file') ? uri.toFilePath() : source;
+    final normalizedPath = path.normalize(rawPath);
+    final file = File(normalizedPath);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SizedBox(
+        width: _width,
+        height: _height,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: file.existsSync() || !isFile
+                  ? Image(
+                      image: isFile
+                          ? FileImage(file)
+                          : NetworkImage(source) as ImageProvider,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Text(
+                          "Failed to load image",
+                          style: TextStyle(
+                            color: colors.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    )
+                  : Center(
+                      child: Text(
+                        "Missing image",
+                        style: TextStyle(
+                          color: colors.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+            ),
+            Positioned(
+              right: 2,
+              bottom: 2,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: (details) {
+                  final ratio = widget.embed.aspectRatio ??
+                      (_height > 0 ? _width / _height : null);
+                  final nextWidth = (_width + details.delta.dx).clamp(80.0, widget.maxWidth);
+                  final nextHeight = ratio != null && ratio > 0
+                      ? (nextWidth / ratio).clamp(60.0, 2000.0)
+                      : (_height + details.delta.dy).clamp(60.0, 2000.0);
+                  setState(() {
+                    _width = nextWidth;
+                    _height = nextHeight;
+                  });
+                },
+                onPanEnd: (_) => _commitSize(_width, _height),
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: colors.primary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(
+                    Icons.open_in_full,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class CanvasDocumentData {
   static const storageType = "canvas-v1";
   static const double defaultWidth = 1800;
   static const double defaultHeight = 1200;
   final List<CanvasStroke> strokes;
   final List<CanvasTextBox> textBoxes;
+  final List<CanvasMediaBox> mediaBoxes;
   final double width;
   final double height;
   final String type;
@@ -1675,6 +2576,7 @@ class CanvasDocumentData {
   CanvasDocumentData({
     required this.strokes,
     required this.textBoxes,
+    required this.mediaBoxes,
     required this.width,
     required this.height,
     this.type = storageType,
@@ -1683,6 +2585,7 @@ class CanvasDocumentData {
   factory CanvasDocumentData.empty() => CanvasDocumentData(
         strokes: const [],
         textBoxes: const [],
+        mediaBoxes: const [],
         width: defaultWidth,
         height: defaultHeight,
       );
@@ -1695,6 +2598,9 @@ class CanvasDocumentData {
           .toList(),
       textBoxes: (json['textBoxes'] as List<dynamic>? ?? [])
           .map((s) => CanvasTextBox.fromJson(Map<String, dynamic>.from(s)))
+          .toList(),
+      mediaBoxes: (json['media'] as List<dynamic>? ?? [])
+          .map((m) => CanvasMediaBox.fromJson(Map<String, dynamic>.from(m)))
           .toList(),
       width: (json['width'] as num?)?.toDouble() ?? defaultWidth,
       height: (json['height'] as num?)?.toDouble() ?? defaultHeight,
@@ -1717,6 +2623,7 @@ class CanvasDocumentData {
           color: Colors.black.value,
         ),
       ],
+      mediaBoxes: const [],
       width: defaultWidth,
       height: defaultHeight,
     );
@@ -1726,6 +2633,7 @@ class CanvasDocumentData {
         "type": storageType,
         "strokes": strokes.map((e) => e.toJson()).toList(),
         "textBoxes": textBoxes.map((e) => e.toJson()).toList(),
+        "media": mediaBoxes.map((e) => e.toJson()).toList(),
         "width": width,
         "height": height,
       };
@@ -1734,6 +2642,7 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: [...strokes, stroke],
       textBoxes: textBoxes,
+      mediaBoxes: mediaBoxes,
       width: width,
       height: height,
     );
@@ -1744,6 +2653,7 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes.sublist(0, strokes.length - 1),
       textBoxes: textBoxes,
+      mediaBoxes: mediaBoxes,
       width: width,
       height: height,
     );
@@ -1753,6 +2663,7 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes,
       textBoxes: [...textBoxes, box],
+      mediaBoxes: mediaBoxes,
       width: width,
       height: height,
     );
@@ -1785,6 +2696,7 @@ class CanvasDocumentData {
                 : b,
           )
           .toList(),
+      mediaBoxes: mediaBoxes,
       width: this.width,
       height: this.height,
     );
@@ -1802,6 +2714,64 @@ class CanvasDocumentData {
     return CanvasDocumentData(
       strokes: strokes,
       textBoxes: textBoxes.where((b) => b.id != id).toList(),
+      mediaBoxes: mediaBoxes,
+      width: width,
+      height: height,
+    );
+  }
+
+  CanvasDocumentData addMediaBox(CanvasMediaBox box) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: textBoxes,
+      mediaBoxes: [...mediaBoxes, box],
+      width: width,
+      height: height,
+    );
+  }
+
+  CanvasDocumentData updateMediaBox(
+    String id, {
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    double? aspectRatio,
+  }) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: textBoxes,
+      mediaBoxes: mediaBoxes
+          .map(
+            (b) => b.id == id
+                ? b.copyWith(
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height,
+                    aspectRatio: aspectRatio,
+                  )
+                : b,
+          )
+          .toList(),
+      width: this.width,
+      height: this.height,
+    );
+  }
+
+  CanvasMediaBox? mediaById(String id) {
+    try {
+      return mediaBoxes.firstWhere((b) => b.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  CanvasDocumentData removeMediaBox(String id) {
+    return CanvasDocumentData(
+      strokes: strokes,
+      textBoxes: textBoxes,
+      mediaBoxes: mediaBoxes.where((b) => b.id != id).toList(),
       width: width,
       height: height,
     );
@@ -1830,6 +2800,16 @@ class CanvasDocumentData {
           )
           .toList(),
       textBoxes: textBoxes
+          .map(
+            (b) => b.copyWith(
+              x: b.x * scaleX,
+              y: b.y * scaleY,
+              width: b.width * scaleX,
+              height: b.height * scaleY,
+            ),
+          )
+          .toList(),
+      mediaBoxes: mediaBoxes
           .map(
             (b) => b.copyWith(
               x: b.x * scaleX,
@@ -1964,6 +2944,76 @@ class CanvasTextBox {
         "text": text,
         "fontSize": fontSize,
         "color": color,
+      };
+}
+
+class CanvasMediaBox {
+  static const String kindImage = "image";
+  static const String kindPdf = "pdf";
+
+  final String id;
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+  final String path;
+  final String kind;
+  final double? aspectRatio;
+
+  CanvasMediaBox({
+    required this.id,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.path,
+    required this.kind,
+    this.aspectRatio,
+  });
+
+  CanvasMediaBox copyWith({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    String? path,
+    String? kind,
+    double? aspectRatio,
+  }) {
+    return CanvasMediaBox(
+      id: id,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      path: path ?? this.path,
+      kind: kind ?? this.kind,
+      aspectRatio: aspectRatio ?? this.aspectRatio,
+    );
+  }
+
+  factory CanvasMediaBox.fromJson(Map<String, dynamic> json) {
+    return CanvasMediaBox(
+      id: json['id'] as String,
+      x: (json['x'] as num).toDouble(),
+      y: (json['y'] as num).toDouble(),
+      width: (json['width'] as num).toDouble(),
+      height: (json['height'] as num).toDouble(),
+      path: json['path'] as String? ?? "",
+      kind: json['kind'] as String? ?? kindImage,
+      aspectRatio: (json['aspectRatio'] as num?)?.toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        "id": id,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "path": path,
+        "kind": kind,
+        "aspectRatio": aspectRatio,
       };
 }
 

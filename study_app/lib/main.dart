@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'models/flashcard.dart';
 import 'models/flashcard_deck.dart';
@@ -41,6 +43,9 @@ enum AppSection {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (_isDesktopPlatform()) {
+    await windowManager.ensureInitialized();
+  }
 
   await NotificationService.instance.init();
 
@@ -292,6 +297,7 @@ class _MainScreenState extends State<MainScreen> {
   AppSection currentSection = AppSection.home;
   bool _onboardingShown = false;
   bool _onboardingLoaded = false;
+  bool _kioskMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -481,6 +487,12 @@ class _MainScreenState extends State<MainScreen> {
             label: const Text('Quick add'),
           ),
           const SizedBox(width: 8),
+          IconButton(
+            tooltip: _kioskMode ? 'Exit fullscreen' : 'Enter fullscreen',
+            onPressed: _toggleKioskMode,
+            icon: Icon(_kioskMode ? Icons.fullscreen_exit : Icons.fullscreen),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: 'Settings',
             onPressed: () => setState(() => currentSection = AppSection.settings),
@@ -755,6 +767,32 @@ class _MainScreenState extends State<MainScreen> {
       },
     );
   }
+
+  Future<void> _toggleKioskMode() async {
+    await _setKioskMode(!_kioskMode);
+  }
+
+  Future<void> _setKioskMode(bool enabled) async {
+    if (_isDesktopPlatform()) {
+      if (enabled) {
+        await windowManager.setFullScreen(true);
+        await windowManager.setAlwaysOnTop(true);
+        await windowManager.setResizable(false);
+        await windowManager.setMinimizable(false);
+        await windowManager.setMaximizable(false);
+        await windowManager.setPreventClose(true);
+      } else {
+        await windowManager.setPreventClose(false);
+        await windowManager.setAlwaysOnTop(false);
+        await windowManager.setFullScreen(false);
+        await windowManager.setResizable(true);
+        await windowManager.setMinimizable(true);
+        await windowManager.setMaximizable(true);
+      }
+    }
+    if (!mounted) return;
+    setState(() => _kioskMode = enabled);
+  }
 }
 
 class NoTransitionsBuilder extends PageTransitionsBuilder {
@@ -824,6 +862,13 @@ class QuizPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return const QuizHomePage();
   }
+}
+
+bool _isDesktopPlatform() {
+  if (kIsWeb) return false;
+  return defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
 }
 
 // Alias to avoid conflict with the page class.
