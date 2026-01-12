@@ -5,6 +5,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'models/flashcard.dart';
@@ -298,6 +299,14 @@ class _MainScreenState extends State<MainScreen> {
   bool _onboardingShown = false;
   bool _onboardingLoaded = false;
   bool _kioskMode = false;
+  bool _dockMode = false;
+  DockSide _dockSide = DockSide.right;
+  int _dockWidth = 640;
+  Rect? _preDockBounds;
+  bool? _preDockAlwaysOnTop;
+  bool? _preDockResizable;
+  bool? _preDockMinimizable;
+  bool? _preDockMaximizable;
 
   @override
   Widget build(BuildContext context) {
@@ -325,6 +334,36 @@ class _MainScreenState extends State<MainScreen> {
           )
         : BoxDecoration(color: colors.surface);
 
+    if (_dockMode) {
+      return Scaffold(
+        body: Container(
+          decoration: gradient,
+          child: SafeArea(
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: _buildContentCard(context, const NotesWorkspacePage(docked: true)),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 10,
+                  child: IconButton(
+                    tooltip: 'Undock window',
+                    onPressed: _toggleDockMode,
+                    icon: const Icon(Icons.close_fullscreen),
+                    style: IconButton.styleFrom(
+                      backgroundColor: colors.surfaceContainerHighest.withOpacity(0.7),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       body: Container(
         decoration: gradient,
@@ -339,17 +378,7 @@ class _MainScreenState extends State<MainScreen> {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(12, 4, 16, 12),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: colors.surfaceContainer.withOpacity(0.8),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: colors.outline),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: _buildSection(),
-                          ),
-                        ),
+                        child: _buildContentCard(context, _buildSection()),
                       ),
                     ),
                   ],
@@ -358,6 +387,21 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildContentCard(BuildContext context, Widget child) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainer.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.outline),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: child,
       ),
     );
   }
@@ -440,7 +484,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildTopBar(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final brightness = Theme.of(context).brightness;
+    final showDock = _isDesktopPlatform();
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
       child: Row(
@@ -492,6 +536,14 @@ class _MainScreenState extends State<MainScreen> {
             onPressed: _toggleKioskMode,
             icon: Icon(_kioskMode ? Icons.fullscreen_exit : Icons.fullscreen),
           ),
+          if (showDock) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: _dockMode ? 'Undock window' : 'Dock window',
+              onPressed: _toggleDockMode,
+              icon: Icon(_dockMode ? Icons.close_fullscreen : Icons.vertical_split),
+            ),
+          ],
           const SizedBox(width: 4),
           IconButton(
             tooltip: 'Settings',
@@ -774,6 +826,9 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _setKioskMode(bool enabled) async {
     if (_isDesktopPlatform()) {
+      if (enabled && _dockMode) {
+        await _setDockMode(false);
+      }
       if (enabled) {
         await windowManager.setFullScreen(true);
         await windowManager.setAlwaysOnTop(true);
@@ -792,6 +847,125 @@ class _MainScreenState extends State<MainScreen> {
     }
     if (!mounted) return;
     setState(() => _kioskMode = enabled);
+  }
+
+  Future<void> _toggleDockMode() async {
+    if (_dockMode) {
+      await _setDockMode(false);
+      return;
+    }
+    final nextSide = await _pickDockSide();
+    if (nextSide == null) return;
+    _dockSide = nextSide;
+    await _setDockMode(true);
+  }
+
+  Future<void> _setDockMode(bool enabled) async {
+    if (_isDesktopPlatform()) {
+      if (enabled && _kioskMode) {
+        await _setKioskMode(false);
+      }
+      if (enabled) {
+        _preDockBounds = await windowManager.getBounds();
+        _preDockAlwaysOnTop = await windowManager.isAlwaysOnTop();
+        _preDockResizable = await windowManager.isResizable();
+        _preDockMinimizable = await windowManager.isMinimizable();
+        _preDockMaximizable = await windowManager.isMaximizable();
+
+        await windowManager.setFullScreen(false);
+        await windowManager.setAlwaysOnTop(true);
+        await windowManager.setResizable(true);
+        await windowManager.setMinimizable(true);
+        await windowManager.setMaximizable(true);
+
+        final display = await screenRetriever.getPrimaryDisplay();
+        final visibleSize = display.visibleSize ?? display.size;
+        final visiblePosition = display.visiblePosition ?? const Offset(0, 0);
+        const minDockWidth = 360.0;
+        final width = _dockWidth.toDouble().clamp(minDockWidth, visibleSize.width);
+        final height = visibleSize.height;
+        final left = _dockSide == DockSide.left
+            ? visiblePosition.dx
+            : visiblePosition.dx + visibleSize.width - width;
+        final top = visiblePosition.dy;
+        await windowManager.setBounds(Rect.fromLTWH(left, top, width, height));
+      } else {
+        final size = await windowManager.getSize();
+        _dockWidth = size.width.round();
+        await windowManager.setAlwaysOnTop(_preDockAlwaysOnTop ?? false);
+        await windowManager.setResizable(_preDockResizable ?? true);
+        await windowManager.setMinimizable(_preDockMinimizable ?? true);
+        await windowManager.setMaximizable(_preDockMaximizable ?? true);
+        if (_preDockBounds != null) {
+          await windowManager.setBounds(_preDockBounds!);
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _dockMode = enabled;
+      if (enabled) {
+        currentSection = AppSection.notes;
+      }
+    });
+  }
+
+  Future<DockSide?> _pickDockSide() async {
+    if (!mounted) return null;
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return showDialog<DockSide>(
+      context: context,
+      builder: (context) {
+        var tempSide = _dockSide;
+        return StatefulBuilder(
+          builder: (context, setModal) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.vertical_split, color: colors.primary),
+                  const SizedBox(width: 8),
+                  const Text('Dock window'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Choose which side to dock on.',
+                    style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  RadioListTile<DockSide>(
+                    value: DockSide.left,
+                    groupValue: tempSide,
+                    onChanged: (val) => setModal(() => tempSide = val ?? DockSide.left),
+                    title: const Text('Left'),
+                  ),
+                  RadioListTile<DockSide>(
+                    value: DockSide.right,
+                    groupValue: tempSide,
+                    onChanged: (val) => setModal(() => tempSide = val ?? DockSide.right),
+                    title: const Text('Right'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(tempSide),
+                  child: const Text('Dock'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 }
 

@@ -16,15 +16,18 @@ import 'package:pdfx/pdfx.dart';
 import '../models/note.dart';
 import '../services/note_service.dart';
 import '../services/windows_pen_input.dart';
+import '../services/notes_dock_state.dart';
 
 class NoteEditorArea extends StatefulWidget {
   final int subjectId;
   final int topicId;
+  final bool docked;
 
   const NoteEditorArea({
     super.key,
     required this.subjectId,
     required this.topicId,
+    this.docked = false,
   });
 
   @override
@@ -60,6 +63,13 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   @override
   void initState() {
     super.initState();
+    if (widget.subjectId != 0) {
+      notesDockState.selectedSubjectId = widget.subjectId;
+    }
+    if (widget.topicId != 0) {
+      notesDockState.selectedTopicId = widget.topicId;
+    }
+    _canvasView = notesDockState.lastCanvasView;
     _initCanvasForNote(null);
     _initRichForNote(null);
     _loadNotesForTopic();
@@ -69,11 +79,23 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   void didUpdateWidget(NoteEditorArea oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.topicId != widget.topicId) {
+      if (widget.subjectId != 0) {
+        notesDockState.selectedSubjectId = widget.subjectId;
+      }
+      if (widget.topicId != 0) {
+        notesDockState.selectedTopicId = widget.topicId;
+        notesDockState.selectedNoteId = null;
+      }
       () async {
         await _saveCurrentNote();
       }();
       _loadNotesForTopic();
     }
+  }
+
+  bool _resolveCanvasView(Note? note) {
+    if (note == null) return notesDockState.lastCanvasView;
+    return notesDockState.noteCanvasView[note.id] ?? notesDockState.lastCanvasView;
   }
 
   @override
@@ -459,7 +481,12 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
 
     Note? nextNote;
     if (notes.isNotEmpty) {
-      if (selectNewest) {
+      final desiredNoteId = notesDockState.selectedNoteId;
+      final restoredIndex =
+          desiredNoteId == null ? -1 : notes.indexWhere((n) => n.id == desiredNoteId);
+      if (restoredIndex >= 0 && !selectNewest) {
+        nextNote = notes[restoredIndex];
+      } else if (selectNewest) {
         nextNote = notes.last;
       } else {
         nextNote = notes.firstWhere(
@@ -469,6 +496,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       }
     }
 
+    final nextCanvasView = _resolveCanvasView(nextNote);
     setState(() {
       _notes = notes;
       _activeNote = nextNote;
@@ -476,7 +504,9 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       final bundle = _bundleFromRaw(nextNote?.content);
       _canvas = bundle.canvas;
       _initRichForNote(nextNote);
+      _canvasView = nextCanvasView;
     });
+    notesDockState.selectedNoteId = nextNote?.id;
     await _ensureMediaAspectRatios();
   }
 
@@ -514,12 +544,15 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
     if (_activeNote?.id == note.id) return;
 
     await _saveCurrentNote();
+    final nextCanvasView = _resolveCanvasView(note);
     setState(() {
       _activeNote = note;
       final bundle = _bundleFromRaw(note.content);
       _canvas = bundle.canvas;
       _initRichForNote(note);
+      _canvasView = nextCanvasView;
     });
+    notesDockState.selectedNoteId = note.id;
     await _ensureMediaAspectRatios();
   }
 
@@ -538,6 +571,7 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
           _initRichForNote(null);
         }
       });
+      notesDockState.selectedNoteId = _activeNote?.id;
     }
   }
 
@@ -722,7 +756,15 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
                   ),
                 ],
                 selected: {_canvasView},
-                onSelectionChanged: (set) => setState(() => _canvasView = set.first),
+                onSelectionChanged: (set) {
+                  final next = set.first;
+                  setState(() => _canvasView = next);
+                  notesDockState.lastCanvasView = next;
+                  final noteId = _activeNote?.id;
+                  if (noteId != null) {
+                    notesDockState.noteCanvasView[noteId] = next;
+                  }
+                },
               ),
               const Spacer(),
               if (!_canvasView && _quillController != null)
@@ -843,6 +885,12 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.docked) {
+      return Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: _buildEditor(),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Row(

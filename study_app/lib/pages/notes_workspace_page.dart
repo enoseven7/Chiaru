@@ -9,9 +9,12 @@ import '../pages/note_editor_area.dart';
 
 import '../services/subject_services.dart';
 import '../services/topic_service.dart';
+import '../services/notes_dock_state.dart';
 
 class NotesWorkspacePage extends StatefulWidget {
-  const NotesWorkspacePage({super.key});
+  final bool docked;
+
+  const NotesWorkspacePage({super.key, this.docked = false});
 
   @override
   State<NotesWorkspacePage> createState() => _NotesWorkspacePageState();
@@ -37,19 +40,38 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
   Future<void> _loadSubjects() async {
     subjects = await subjectService.getSubjects();
     if (subjects.isNotEmpty) {
-      selectedSubject = 0;
-      await _loadTopics(subjects[0].id);
+      final desiredId = notesDockState.selectedSubjectId;
+      final preservedIndex = selectedSubject < subjects.length ? selectedSubject : 0;
+      final restoredIndex =
+          desiredId == null ? preservedIndex : subjects.indexWhere((s) => s.id == desiredId);
+      selectedSubject = restoredIndex >= 0 ? restoredIndex : 0;
+      notesDockState.selectedSubjectId = subjects[selectedSubject].id;
+      await _loadTopics(subjects[selectedSubject].id);
     } else {
       topics = [];
       selectedSubject = 0;
       selectedTopic = 0;
+      notesDockState.selectedSubjectId = null;
+      notesDockState.selectedTopicId = null;
+      notesDockState.selectedNoteId = null;
     }
     if (mounted) setState(() {});
   }
 
   Future<void> _loadTopics(int subjectId) async {
     topics = await topicService.getTopicsForSubject(subjectId);
-    selectedTopic = 0;
+    if (topics.isNotEmpty) {
+      final desiredId = notesDockState.selectedTopicId;
+      final preservedIndex = selectedTopic < topics.length ? selectedTopic : 0;
+      final restoredIndex =
+          desiredId == null ? preservedIndex : topics.indexWhere((t) => t.id == desiredId);
+      selectedTopic = restoredIndex >= 0 ? restoredIndex : 0;
+      notesDockState.selectedTopicId = topics[selectedTopic].id;
+    } else {
+      selectedTopic = 0;
+      notesDockState.selectedTopicId = null;
+      notesDockState.selectedNoteId = null;
+    }
     if (mounted) setState(() {});
   }
 
@@ -181,6 +203,14 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
         ? topics[selectedTopic].id
         : 0;
 
+    if (widget.docked) {
+      return NoteEditorArea(
+        subjectId: currentSubjectId,
+        topicId: currentTopicId,
+        docked: true,
+      );
+    }
+
     return Row(
       children: [
         _ResizablePanel(
@@ -211,6 +241,9 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
                       selectedTopic = 0;
                       topics = [];
                     });
+                    notesDockState.selectedSubjectId = subjects[i].id;
+                    notesDockState.selectedTopicId = null;
+                    notesDockState.selectedNoteId = null;
                     await _loadTopics(subjects[i].id);
                   },
                 ),
@@ -243,6 +276,8 @@ class _NotesWorkspacePageState extends State<NotesWorkspacePage> {
                     setState(() {
                       selectedTopic = i;
                     });
+                    notesDockState.selectedTopicId = topics[i].id;
+                    notesDockState.selectedNoteId = null;
                   },
                 ),
         ),

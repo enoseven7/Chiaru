@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:path/path.dart' as path;
+import 'package:pdfx/pdfx.dart' as pdfx;
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion_pdf;
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../models/teach_settings.dart';
@@ -98,15 +101,92 @@ class AiGenerationService {
     }
   }
 
-  Future<String> _readPdf(String path) async {
-    final file = File(path);
+  String _normalizeText(String text) {
+    return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  Future<String> _readPdf(String filePath, {int maxChars = 12000}) async {
+    final file = File(filePath);
     if (!await file.exists()) return "";
     try {
       final bytes = await file.readAsBytes();
-      final doc = PdfDocument(inputBytes: bytes);
-      final text = PdfTextExtractor(doc).extractText();
+      final doc = syncfusion_pdf.PdfDocument(inputBytes: bytes);
+      final text = syncfusion_pdf.PdfTextExtractor(doc).extractText();
       doc.dispose();
-      return text;
+      final cleaned = _normalizeText(text);
+      if (cleaned.isEmpty || cleaned.length < 40) {
+        final ocr = await _readPdfWithOcr(bytes, maxChars: maxChars);
+        if (ocr.isNotEmpty) return ocr;
+      }
+      if (cleaned.isEmpty) return "";
+      if (cleaned.length <= maxChars) return cleaned;
+      return "${cleaned.substring(0, maxChars)}...";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  Future<String> _readPdfWithOcr(List<int> bytes, {int maxChars = 12000}) async {
+    pdfx.PdfDocument? doc;
+    Directory? tempDir;
+    final buffer = StringBuffer();
+    try {
+      doc = await pdfx.PdfDocument.openData(Uint8List.fromList(bytes));
+      tempDir = await Directory.systemTemp.createTemp('studyapp_ocr');
+      final pageCount = doc.pagesCount;
+      final maxPages = pageCount > 6 ? 6 : pageCount;
+      for (int i = 1; i <= maxPages; i++) {
+        final page = await doc.getPage(i);
+        try {
+          final maxSide = 1600.0;
+          final baseSide = page.width > page.height ? page.width : page.height;
+          final scale = baseSide <= 0 ? 1.0 : (maxSide / baseSide).clamp(1.0, 2.0);
+          final targetWidth = (page.width * scale).roundToDouble();
+          final targetHeight = (page.height * scale).roundToDouble();
+          final image = await page.render(
+            width: targetWidth,
+            height: targetHeight,
+            format: pdfx.PdfPageImageFormat.png,
+            backgroundColor: '#FFFFFF',
+          );
+          if (image == null) continue;
+          final imgPath = path.join(tempDir.path, 'page_${i.toString().padLeft(2, '0')}.png');
+          await File(imgPath).writeAsBytes(image.bytes, flush: true);
+          final text = await _runTesseract(imgPath);
+          if (text.isNotEmpty) {
+            buffer.writeln(text);
+            if (buffer.length >= maxChars) break;
+          }
+        } finally {
+          await page.close();
+        }
+      }
+    } catch (_) {
+      return "";
+    } finally {
+      await doc?.close();
+      if (tempDir != null) {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
+      }
+    }
+    final cleaned = _normalizeText(buffer.toString());
+    if (cleaned.isEmpty) return "";
+    if (cleaned.length <= maxChars) return cleaned;
+    return "${cleaned.substring(0, maxChars)}...";
+  }
+
+  Future<String> _runTesseract(String imagePath) async {
+    try {
+      final result = await Process.run(
+        'tesseract',
+        [imagePath, 'stdout', '-l', 'eng'],
+        runInShell: true,
+      );
+      if (result.exitCode != 0) return "";
+      final out = result.stdout?.toString() ?? "";
+      return _normalizeText(out);
     } catch (_) {
       return "";
     }
@@ -165,6 +245,7 @@ class AiGenerationService {
     required String title,
     String? description,
     String? notes,
+    String? instructions,
     List<String> pdfPaths = const [],
     int maxCards = 10,
     int? tokenLimit,
@@ -174,12 +255,18 @@ class AiGenerationService {
     for (final p in pdfPaths) {
       try {
         final t = await _readPdf(p);
-        if (t.isNotEmpty) pdfTexts.add(t);
+        final name = path.basename(p);
+        if (t.isNotEmpty) {
+          pdfTexts.add("PDF: $name\n$t");
+        } else {
+          pdfTexts.add("PDF: $name (no extractable text found)");
+        }
       } catch (_) {}
     }
     final source = [
       "Title: $title",
       if ((description ?? '').isNotEmpty) "Description: $description",
+      if ((instructions ?? '').isNotEmpty) "Instructions: $instructions",
       if ((notes ?? '').isNotEmpty) "Notes: $notes",
       if (pdfTexts.isNotEmpty) "PDF excerpts:\n${pdfTexts.join('\n---\n')}",
     ].join("\n\n");
@@ -231,6 +318,7 @@ $source
     required String title,
     String? description,
     String? notes,
+    String? instructions,
     List<String> pdfPaths = const [],
     int maxQuestions = 8,
     int? tokenLimit,
@@ -240,12 +328,18 @@ $source
     for (final p in pdfPaths) {
       try {
         final t = await _readPdf(p);
-        if (t.isNotEmpty) pdfTexts.add(t);
+        final name = path.basename(p);
+        if (t.isNotEmpty) {
+          pdfTexts.add("PDF: $name\n$t");
+        } else {
+          pdfTexts.add("PDF: $name (no extractable text found)");
+        }
       } catch (_) {}
     }
     final source = [
       "Title: $title",
       if ((description ?? '').isNotEmpty) "Description: $description",
+      if ((instructions ?? '').isNotEmpty) "Instructions: $instructions",
       if ((notes ?? '').isNotEmpty) "Notes: $notes",
       if (pdfTexts.isNotEmpty) "PDF excerpts:\n${pdfTexts.join('\n---\n')}",
     ].join("\n\n");

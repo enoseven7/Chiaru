@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/flashcard_deck.dart';
 import '../models/subject.dart';
@@ -267,6 +268,7 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
 
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
+    final instructionsCtrl = TextEditingController();
     final notes = await noteService.getNotesForTopic(topicId);
     final titleMap = await noteTitleService.loadTitles(notes.map((n) => n.id).toList());
     final Set<int> selectedNotes = {};
@@ -285,6 +287,67 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
             .map(aiGenerationService.extractNoteText),
       ].where((e) => e.trim().isNotEmpty).join("\n");
       return aiGenerationService.estimateTokens(base, perItem: 60, itemCount: maxCards);
+    }
+
+    Future<bool> maybeShowOcrInfo(BuildContext context) async {
+      final prefs = await SharedPreferences.getInstance();
+      final seen = prefs.getBool('ocr_info_shown') ?? false;
+      if (seen) return true;
+      final colors = Theme.of(context).colorScheme;
+      final ok = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("PDF text reading (OCR)"),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "To read text from scanned PDFs, StudyApp uses Tesseract OCR.",
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Install steps (Windows):",
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text("1) Download the installer: https://github.com/UB-Mannheim/tesseract/wiki"),
+                    const Text("2) Run the installer and allow it to add Tesseract to PATH."),
+                    const Text("3) Restart the app, then try again."),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Non-scanned PDFs should still work without OCR.",
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text("Cancel"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text("Got it"),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (ok) {
+        await prefs.setBool('ocr_info_shown', true);
+      }
+      return ok;
     }
 
     await showDialog(
@@ -308,6 +371,15 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                     controller: descCtrl,
                     decoration: const InputDecoration(labelText: "Description (optional)"),
                     onChanged: (_) => setLocal(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: instructionsCtrl,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: "AI instructions (optional)",
+                      hintText: "e.g., Only make cards about rules or definitions.",
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Container(
@@ -389,6 +461,8 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                         onPressed: working
                             ? null
                             : () async {
+                                final ok = await maybeShowOcrInfo(context);
+                                if (!ok) return;
                                 final result = await FilePicker.platform.pickFiles(
                                   allowMultiple: true,
                                   type: FileType.custom,
@@ -487,6 +561,9 @@ class _FlashcardHomePageState extends State<FlashcardHomePage> {
                             topicId: topicId,
                             title: titleCtrl.text.trim().isEmpty ? "AI Deck" : titleCtrl.text.trim(),
                             description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                            instructions: instructionsCtrl.text.trim().isEmpty
+                                ? null
+                                : instructionsCtrl.text.trim(),
                             notes: selectedNotes
                                     .map((id) => notes.firstWhere((n) => n.id == id).content)
                                     .map(aiGenerationService.extractNoteText)
