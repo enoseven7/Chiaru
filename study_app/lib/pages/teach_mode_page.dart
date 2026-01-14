@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../models/teach_settings.dart';
 import '../services/teach_service.dart';
+import '../services/local_llm_service.dart';
 import 'settings_page.dart';
 
 class TeachModePageScreen extends StatefulWidget {
@@ -53,12 +55,26 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
     final explanation = explanationCtrl.text.trim();
     if (topic.isEmpty || explanation.isEmpty) return;
 
+    final useLocal = settings!.useLocalLLM;
     final apiKey = settings!.apiKey?.trim() ?? "";
-    if (apiKey.isEmpty) {
+
+    // Check if using cloud and no API key
+    if (!useLocal && apiKey.isEmpty) {
       setState(() {
-        critique = "Add an API key in Settings > AI to use cloud critique.";
+        critique = "Add an API key in Settings > AI to use cloud critique, or enable Local LLM mode.";
       });
       return;
+    }
+
+    // Check if using local LLM and it's available
+    if (useLocal) {
+      final selectedModel = await localLLMService.getSelectedModel();
+      if (selectedModel == null) {
+        setState(() {
+          critique = "No local model selected. Please download and select a model in Settings > AI.";
+        });
+        return;
+      }
     }
 
     setState(() {
@@ -75,6 +91,7 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
         topic: topic,
         explanation: explanation,
         audience: audience,
+        useLocalLLM: useLocal,
       );
     } catch (e) {
       critique = "Failed to get critique: $e";
@@ -163,14 +180,29 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: colors.outline),
                       ),
-                      child: SingleChildScrollView(
-                        child: Text(
-                          critique.isEmpty
-                              ? "Output will appear here."
-                              : critique,
-                          style: textTheme.bodyMedium,
-                        ),
-                      ),
+                      child: critique.isEmpty
+                          ? Center(
+                              child: Text(
+                                "Output will appear here.",
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                            )
+                          : Markdown(
+                              data: critique,
+                              selectable: true,
+                              styleSheet: MarkdownStyleSheet(
+                                p: textTheme.bodyMedium,
+                                h1: textTheme.headlineSmall,
+                                h2: textTheme.titleLarge,
+                                h3: textTheme.titleMedium,
+                                strong: textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                listBullet: textTheme.bodyMedium,
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -183,6 +215,8 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
   }
 
   Widget _settingsSummaryCard(TextTheme textTheme, ColorScheme colors, bool hasApiKey) {
+    final useLocal = settings!.useLocalLLM;
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -195,29 +229,85 @@ class _TeachModePageScreenState extends State<TeachModePageScreen> {
         children: [
           Text("AI Settings", style: textTheme.titleSmall),
           const SizedBox(height: 8),
-          _summaryRow("Provider", settings!.cloudProvider.isEmpty ? "openai" : settings!.cloudProvider),
-          _summaryRow("Model", settings!.cloudModel.isEmpty ? "gpt-4o-mini" : settings!.cloudModel),
-          if (settings!.cloudEndpoint.isNotEmpty)
-            _summaryRow("Endpoint", settings!.cloudEndpoint),
-          const SizedBox(height: 8),
+
+          // Show mode (Local or Cloud)
           Row(
             children: [
               Icon(
-                hasApiKey ? Icons.verified_user : Icons.error_outline,
-                color: hasApiKey ? Colors.green : colors.error,
+                useLocal ? Icons.computer : Icons.cloud,
                 size: 18,
+                color: colors.primary,
               ),
               const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  hasApiKey ? "API key configured" : "No API key set",
-                  style: textTheme.bodySmall?.copyWith(
-                    color: hasApiKey ? colors.onSurfaceVariant : colors.error,
-                  ),
+              Text(
+                useLocal ? "Local LLM" : "Cloud AI",
+                style: textTheme.titleSmall?.copyWith(
+                  color: colors.primary,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 8),
+
+          // Show appropriate details based on mode
+          if (useLocal) ...[
+            FutureBuilder<String?>(
+              future: localLLMService.getSelectedModel(),
+              builder: (context, snapshot) {
+                final model = snapshot.data;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _summaryRow("Model", model ?? "None selected"),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          model != null ? Icons.check_circle : Icons.error_outline,
+                          color: model != null ? Colors.green : colors.error,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            model != null ? "Model ready" : "No model selected",
+                            style: textTheme.bodySmall?.copyWith(
+                              color: model != null ? colors.onSurfaceVariant : colors.error,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ] else ...[
+            _summaryRow("Provider", settings!.cloudProvider.isEmpty ? "openai" : settings!.cloudProvider),
+            _summaryRow("Model", settings!.cloudModel.isEmpty ? "gpt-4o-mini" : settings!.cloudModel),
+            if (settings!.cloudEndpoint.isNotEmpty)
+              _summaryRow("Endpoint", settings!.cloudEndpoint),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(
+                  hasApiKey ? Icons.verified_user : Icons.error_outline,
+                  color: hasApiKey ? Colors.green : colors.error,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    hasApiKey ? "API key configured" : "No API key set",
+                    style: textTheme.bodySmall?.copyWith(
+                      color: hasApiKey ? colors.onSurfaceVariant : colors.error,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: () {

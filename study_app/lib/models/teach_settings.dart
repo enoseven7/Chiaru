@@ -7,6 +7,9 @@ class TeachSettings {
   /// Singleton entry: id = 0
   Id id = 0;
 
+  /// Whether to use local LLM (true) or cloud provider (false)
+  bool useLocalLLM = false;
+
   /// Which cloud provider to call (e.g., openai, anthropic).
   String cloudProvider = 'openai';
 

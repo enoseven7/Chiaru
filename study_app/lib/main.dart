@@ -25,6 +25,7 @@ import 'pages/quiz_home_page.dart';
 import 'pages/home_dashboard_page.dart';
 import 'pages/teach_mode_page.dart';
 import 'pages/planner_page.dart';
+import 'pages/pomodoro_page.dart';
 import 'services/notification_service.dart';
 import 'pages/settings_page.dart';
 import 'services/settings_service.dart';
@@ -38,6 +39,7 @@ enum AppSection {
   flashcards,
   quizzes,
   feynman,
+  pomodoro,
   settings,
 }
 
@@ -107,6 +109,7 @@ class StudyApp extends StatelessWidget {
   }
 
   ThemeData _buildTheme(AppSettings settings) {
+    final isRetro = settings.preset == ThemePreset.retro;
     final onPrimary = _idealOnColor(settings.primary);
     final onSecondary = _idealOnColor(settings.secondary);
     final outline = settings.highContrast
@@ -148,10 +151,12 @@ class StudyApp extends StatelessWidget {
       surfaceDim: settings.surface,
     );
 
-    final headlineFont =
-        GoogleFonts.workSans().copyWith(fontFamilyFallback: const ['Segoe UI Variable', 'Segoe UI']);
-    final bodyFont =
-        GoogleFonts.inter().copyWith(fontFamilyFallback: const ['Segoe UI Variable', 'Segoe UI']);
+    final headlineFont = isRetro
+        ? const TextStyle(fontFamily: 'Tahoma', fontFamilyFallback: ['Verdana', 'Arial', 'sans-serif'])
+        : GoogleFonts.workSans().copyWith(fontFamilyFallback: const ['Segoe UI Variable', 'Segoe UI']);
+    final bodyFont = isRetro
+        ? const TextStyle(fontFamily: 'Tahoma', fontFamilyFallback: ['Verdana', 'Arial', 'sans-serif'])
+        : GoogleFonts.inter().copyWith(fontFamilyFallback: const ['Segoe UI Variable', 'Segoe UI']);
 
     final motionTheme = settings.reduceMotion
         ? const PageTransitionsTheme(
@@ -176,16 +181,20 @@ class StudyApp extends StatelessWidget {
       dividerColor: baseColorScheme.outline.withOpacity(0.6),
       pageTransitionsTheme: motionTheme,
       appBarTheme: AppBarTheme(
-        backgroundColor: baseColorScheme.surface,
-        foregroundColor: baseColorScheme.onSurface,
-        elevation: 2,
+        backgroundColor: isRetro ? const Color(0xFF0053D6) : baseColorScheme.surface,
+        foregroundColor: isRetro ? Colors.white : baseColorScheme.onSurface,
+        elevation: isRetro ? 3 : 2,
         scrolledUnderElevation: 0,
         centerTitle: false,
+        shadowColor: isRetro ? Colors.black45 : null,
         titleTextStyle: headlineFont.copyWith(
           fontSize: 20,
-          fontWeight: FontWeight.w600,
-          color: baseColorScheme.onSurface,
+          fontWeight: isRetro ? FontWeight.w700 : FontWeight.w600,
+          color: isRetro ? Colors.white : baseColorScheme.onSurface,
           letterSpacing: -0.2,
+        ),
+        iconTheme: IconThemeData(
+          color: isRetro ? Colors.white : baseColorScheme.onSurface,
         ),
       ),
       textTheme: TextTheme(
@@ -228,47 +237,75 @@ class StudyApp extends StatelessWidget {
       highlightColor: Colors.transparent,
       splashColor: Colors.transparent,
       cardTheme: CardThemeData(
-        elevation: 1,
+        elevation: isRetro ? 2 : 1,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(isRetro ? 0 : 6),
+          side: isRetro ? BorderSide(color: const Color(0xFF8B8680), width: 1) : BorderSide.none,
+        ),
+        color: isRetro ? const Color(0xFFECE9D8) : null,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: baseColorScheme.surfaceContainer,
+        fillColor: isRetro ? Colors.white : baseColorScheme.surfaceContainer,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: baseColorScheme.outline.withOpacity(0.4)),
+          borderRadius: BorderRadius.circular(isRetro ? 0 : 6),
+          borderSide: BorderSide(
+            color: isRetro ? const Color(0xFF7A96DF) : baseColorScheme.outline.withOpacity(0.4),
+            width: isRetro ? 1.5 : 1,
+          ),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: baseColorScheme.outline.withOpacity(0.4)),
+          borderRadius: BorderRadius.circular(isRetro ? 0 : 6),
+          borderSide: BorderSide(
+            color: isRetro ? const Color(0xFF7A96DF) : baseColorScheme.outline.withOpacity(0.4),
+            width: isRetro ? 1.5 : 1,
+          ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: baseColorScheme.primary, width: 1.2),
+          borderRadius: BorderRadius.circular(isRetro ? 0 : 6),
+          borderSide: BorderSide(
+            color: isRetro ? const Color(0xFF0053D6) : baseColorScheme.primary,
+            width: isRetro ? 2 : 1.2,
+          ),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(isRetro ? 3 : 6),
+            side: isRetro ? BorderSide(color: const Color(0xFF003C74), width: 1) : BorderSide.none,
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          backgroundColor: baseColorScheme.primary,
-          foregroundColor: Colors.black,
-          elevation: 0,
+          backgroundColor: isRetro ? const Color(0xFFECE9D8) : baseColorScheme.primary,
+          foregroundColor: isRetro ? Colors.black : Colors.black,
+          elevation: isRetro ? 1 : 0,
+          shadowColor: isRetro ? Colors.black45 : null,
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(isRetro ? 3 : 6),
+            side: isRetro ? BorderSide(color: const Color(0xFF003C74), width: 1) : BorderSide.none,
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          backgroundColor: isRetro ? const Color(0xFFD4D0C8) : null,
+          elevation: isRetro ? 1 : 0,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-          side: BorderSide(color: baseColorScheme.outline.withOpacity(0.6)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(isRetro ? 3 : 6),
+          ),
+          side: BorderSide(
+            color: isRetro ? const Color(0xFF003C74) : baseColorScheme.outline.withOpacity(0.6),
+            width: isRetro ? 1.5 : 1,
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          backgroundColor: isRetro ? const Color(0xFFECE9D8) : null,
         ),
       ),
       extensions: [
@@ -377,7 +414,7 @@ class _MainScreenState extends State<MainScreen> {
                     _buildTopBar(context),
                     Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 16, 12),
+                        padding: const EdgeInsets.fromLTRB(8, 4, 12, 8),
                         child: _buildContentCard(context, _buildSection()),
                       ),
                     ),
@@ -396,18 +433,19 @@ class _MainScreenState extends State<MainScreen> {
     return Container(
       decoration: BoxDecoration(
         color: colors.surfaceContainer.withOpacity(0.8),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: colors.outline),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(10),
         child: child,
       ),
     );
   }
 
   NavigationRail _buildRail(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width > 1180;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isWide = screenWidth > 1180;
     final brightness = Theme.of(context).brightness;
     final logoAsset =
         brightness == Brightness.dark ? 'assets/0.5x/White_Transparent@0.5x.png' : 'assets/0.5x/Black Transparent@0.5x.png';
@@ -418,25 +456,27 @@ class _MainScreenState extends State<MainScreen> {
       (AppSection.flashcards, Icons.style_outlined, 'Cards'),
       (AppSection.quizzes, Icons.quiz_outlined, 'Quizzes'),
       (AppSection.feynman, Icons.record_voice_over_outlined, 'Teach'),
+      (AppSection.pomodoro, Icons.timer_outlined, 'Focus'),
       (AppSection.settings, Icons.settings_outlined, 'Settings'),
     ];
     final selectedIndex = destinations.indexWhere((d) => d.$1 == currentSection);
 
     return NavigationRail(
       extended: isWide,
-      minExtendedWidth: 180,
+      minExtendedWidth: 160,
+      minWidth: 56,
       backgroundColor: Colors.transparent,
       selectedIndex: selectedIndex,
       onDestinationSelected: (i) => setState(() => currentSection = destinations[i].$1),
       leading: Padding(
-        padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
+        padding: EdgeInsets.only(top: isWide ? 8.0 : 6.0, bottom: isWide ? 12.0 : 8.0),
         child: Column(
-          children: 
+          children:
           [
             Container(
-              width: 40,
-              height: 40,
-              padding: const EdgeInsets.all(6),
+              width: isWide ? 40 : 36,
+              height: isWide ? 40 : 36,
+              padding: EdgeInsets.all(isWide ? 6 : 5),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surfaceContainerHigh,
                 borderRadius: BorderRadius.circular(10),
@@ -449,10 +489,10 @@ class _MainScreenState extends State<MainScreen> {
             ),
             if (isWide)
               Padding(
-                padding: const EdgeInsets.only(top: 8.0),
+                padding: const EdgeInsets.only(top: 6.0),
                 child: Text(
                   'Chiaru',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
           ],
@@ -485,52 +525,64 @@ class _MainScreenState extends State<MainScreen> {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final showDock = _isDesktopPlatform();
+    final isNarrow = MediaQuery.of(context).size.width < 900;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 16, 8),
+      padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
       child: Row(
         children: [
-          
-          const SizedBox(width: 16),
+          const SizedBox(width: 8),
           Expanded(
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: colors.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: colors.outline),
               ),
               child: InkWell(
                 onTap: _openSearch,
                 child: Row(
                   children: [
-                    Icon(Icons.search, color: colors.onSurfaceVariant),
+                    Icon(Icons.search, size: 20, color: colors.onSurfaceVariant),
                     const SizedBox(width: 8),
-                    Text(
-                      'Search notes, cards, quizzes...',
-                      style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-                    ),
+                    if (!isNarrow)
+                      Text(
+                        'Search notes, cards, quizzes...',
+                        style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+                      ),
                     const Spacer(),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: colors.surface,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
                         border: Border.all(color: colors.outline),
                       ),
-                      child: Text('Ctrl + K', style: textTheme.labelLarge),
+                      child: Text('Ctrl+K', style: textTheme.labelSmall),
                     ),
                   ],
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: () => setState(() => currentSection = AppSection.planner),
-            icon: const Icon(Icons.add_circle_outline),
-            label: const Text('Quick add'),
-          ),
           const SizedBox(width: 8),
+          if (isNarrow)
+            IconButton(
+              tooltip: 'Quick add',
+              onPressed: () => setState(() => currentSection = AppSection.planner),
+              icon: const Icon(Icons.add_circle_outline),
+            )
+          else
+            ElevatedButton.icon(
+              onPressed: () => setState(() => currentSection = AppSection.planner),
+              icon: const Icon(Icons.add_circle_outline, size: 20),
+              label: const Text('Quick add'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+            ),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: _kioskMode ? 'Exit fullscreen' : 'Enter fullscreen',
             onPressed: _toggleKioskMode,
@@ -569,6 +621,8 @@ class _MainScreenState extends State<MainScreen> {
         return const QuizPage();
       case AppSection.feynman:
         return const TeachModePage();
+      case AppSection.pomodoro:
+        return const PomodoroPage();
       case AppSection.settings:
         return const SettingsPage();
     }

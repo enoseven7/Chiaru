@@ -36,6 +36,11 @@ const TeachSettingsSchema = CollectionSchema(
       id: 3,
       name: r'cloudProvider',
       type: IsarType.string,
+    ),
+    r'useLocalLLM': PropertySchema(
+      id: 4,
+      name: r'useLocalLLM',
+      type: IsarType.bool,
     )
   },
   estimateSize: _teachSettingsEstimateSize,
@@ -80,6 +85,7 @@ void _teachSettingsSerialize(
   writer.writeString(offsets[1], object.cloudEndpoint);
   writer.writeString(offsets[2], object.cloudModel);
   writer.writeString(offsets[3], object.cloudProvider);
+  writer.writeBool(offsets[4], object.useLocalLLM);
 }
 
 TeachSettings _teachSettingsDeserialize(
@@ -94,6 +100,7 @@ TeachSettings _teachSettingsDeserialize(
   object.cloudModel = reader.readString(offsets[2]);
   object.cloudProvider = reader.readString(offsets[3]);
   object.id = id;
+  object.useLocalLLM = reader.readBool(offsets[4]);
   return object;
 }
 
@@ -112,6 +119,8 @@ P _teachSettingsDeserializeProp<P>(
       return (reader.readString(offset)) as P;
     case 3:
       return (reader.readString(offset)) as P;
+    case 4:
+      return (reader.readBool(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
@@ -828,6 +837,16 @@ extension TeachSettingsQueryFilter
       ));
     });
   }
+
+  QueryBuilder<TeachSettings, TeachSettings, QAfterFilterCondition>
+      useLocalLLMEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'useLocalLLM',
+        value: value,
+      ));
+    });
+  }
 }
 
 extension TeachSettingsQueryObject
@@ -888,6 +907,19 @@ extension TeachSettingsQuerySortBy
       sortByCloudProviderDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'cloudProvider', Sort.desc);
+    });
+  }
+
+  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> sortByUseLocalLLM() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'useLocalLLM', Sort.asc);
+    });
+  }
+
+  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
+      sortByUseLocalLLMDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'useLocalLLM', Sort.desc);
     });
   }
 }
@@ -958,6 +990,19 @@ extension TeachSettingsQuerySortThenBy
       return query.addSortBy(r'id', Sort.desc);
     });
   }
+
+  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy> thenByUseLocalLLM() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'useLocalLLM', Sort.asc);
+    });
+  }
+
+  QueryBuilder<TeachSettings, TeachSettings, QAfterSortBy>
+      thenByUseLocalLLMDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'useLocalLLM', Sort.desc);
+    });
+  }
 }
 
 extension TeachSettingsQueryWhereDistinct
@@ -989,6 +1034,13 @@ extension TeachSettingsQueryWhereDistinct
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'cloudProvider',
           caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<TeachSettings, TeachSettings, QDistinct>
+      distinctByUseLocalLLM() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'useLocalLLM');
     });
   }
 }
@@ -1024,6 +1076,12 @@ extension TeachSettingsQueryProperty
       cloudProviderProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'cloudProvider');
+    });
+  }
+
+  QueryBuilder<TeachSettings, bool, QQueryOperations> useLocalLLMProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'useLocalLLM');
     });
   }
 }

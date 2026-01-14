@@ -2,7 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-enum ThemePreset { dark, light, amoled, sunset, ocean, forest, custom }
+enum ThemePreset { dark, light, amoled, sunset, ocean, forest, retro, custom }
 
 class AppSettings {
   AppSettings({
@@ -160,10 +160,26 @@ class AppSettings {
           gradientEnd: const Color(0xFF122719),
           useGradient: true,
         );
+      case ThemePreset.retro:
+        // Windows XP/Vista inspired theme
+        // Classic Windows blue with Luna silver/olive tones
+        return AppSettings(
+          preset: preset,
+          brightness: Brightness.light,
+          primary: const Color(0xFF0053D6), // Windows XP blue
+          secondary: const Color(0xFF5B9BD5), // Windows Vista glass blue
+          surface: const Color(0xFFECE9D8), // Windows XP olive/silver background
+          panel: const Color(0xFFD4D0C8), // Classic Windows gray
+          onSurface: const Color(0xFF000000), // Classic black text
+          onSurfaceVariant: const Color(0xFF3C3C3C), // Dark gray text
+          outline: const Color(0xFF8B8680), // Classic border gray
+          gradientStart: const Color(0xFFECE9D8), // XP olive
+          gradientEnd: const Color(0xFFD4D0C8), // Classic gray
+          useGradient: true,
+        );
       case ThemePreset.custom:
         return AppSettings.fromPreset(ThemePreset.dark).copyWith(preset: ThemePreset.custom);
       case ThemePreset.dark:
-      default:
         return AppSettings(
           preset: ThemePreset.dark,
           brightness: Brightness.dark,

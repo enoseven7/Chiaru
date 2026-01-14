@@ -10,4 +10,6 @@ class Note {
 
   @Index(caseSensitive: false)
   late String content;
+
+  String title = 'Untitled Note';  // Default title for notes
 }

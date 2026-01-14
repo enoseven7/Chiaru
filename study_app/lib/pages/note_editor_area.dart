@@ -331,9 +331,31 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       allowedExtensions: ['pdf'],
     );
     if (filePath == null) return;
+
+    // Show loading dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Text("Processing PDF..."),
+          ],
+        ),
+      ),
+    );
+
     final stored = await _copyToNoteMedia(filePath, prefix: "pdf");
     try {
       final images = await _renderPdfToImages(stored);
+
+      // Close loading dialog
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
       final count = images.length;
       if (count == 0) {
         throw Exception("No pages rendered.");
@@ -359,107 +381,29 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       }
     } catch (e, st) {
       debugPrint("PDF import failed (canvas): $e\n$st");
+      // Close loading dialog if it's still open
+      if (mounted) {
+        try {
+          Navigator.of(context, rootNavigator: true).pop();
+        } catch (_) {}
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to import PDF pages: $e")),
-      );
-    }
-  }
-
-  Future<void> _insertRichImage() async {
-    final controller = _quillController;
-    if (controller == null) return;
-    final filePath = await _pickFile(type: FileType.image);
-    if (filePath == null) return;
-    _richFocusNode.requestFocus();
-    final stored = await _copyToNoteMedia(filePath, prefix: "img");
-    final ratio = await _imageAspectRatio(stored);
-    final docLength = controller.document.length;
-    final selectionIndex = controller.selection.baseOffset;
-    final fallbackIndex = max(0, docLength - 1);
-    if (!_richFocusNode.hasFocus) {
-      controller.updateSelection(
-        TextSelection.collapsed(offset: fallbackIndex),
-        quill.ChangeSource.local,
-      );
-    }
-    final safeIndex = selectionIndex >= 0 ? min(selectionIndex, fallbackIndex) : fallbackIndex;
-    controller.replaceText(
-      safeIndex,
-      0,
-      quill.BlockEmbed.custom(
-        _ResizableImageEmbed(
-          source: stored,
-          width: _defaultRichImageWidth,
-          height: _defaultRichImageHeight,
-          aspectRatio: ratio,
+        SnackBar(
+          content: Text("Failed to import PDF pages: $e"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
         ),
-      ),
-      null,
-    );
-    controller.updateSelection(
-      TextSelection.collapsed(offset: safeIndex + 1),
-      quill.ChangeSource.local,
-    );
-  }
-
-  Future<void> _insertRichPdf() async {
-    final controller = _quillController;
-    if (controller == null) return;
-    final filePath = await _pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-    if (filePath == null) return;
-    _richFocusNode.requestFocus();
-    final stored = await _copyToNoteMedia(filePath, prefix: "pdf");
-    try {
-      final images = await _renderPdfToImages(stored);
-      if (images.isEmpty) {
-        throw Exception("No pages rendered.");
-      }
-      final docLength = controller.document.length;
-      final selectionIndex = controller.selection.baseOffset;
-      final fallbackIndex = max(0, docLength - 1);
-      if (!_richFocusNode.hasFocus) {
-        controller.updateSelection(
-          TextSelection.collapsed(offset: fallbackIndex),
-          quill.ChangeSource.local,
-        );
-      }
-      var insertIndex = selectionIndex >= 0 ? min(selectionIndex, fallbackIndex) : fallbackIndex;
-      for (final imgPath in images) {
-        final ratio = await _imageAspectRatio(imgPath);
-        controller.replaceText(
-          insertIndex,
-          0,
-          quill.BlockEmbed.custom(
-            _ResizableImageEmbed(
-              source: imgPath,
-              width: _defaultRichImageWidth,
-              height: _defaultRichImageHeight,
-              aspectRatio: ratio,
-            ),
-          ),
-          null,
-        );
-        insertIndex += 1;
-      }
-      controller.updateSelection(
-        TextSelection.collapsed(offset: insertIndex),
-        quill.ChangeSource.local,
-      );
-    } catch (e, st) {
-      debugPrint("PDF import failed (rich): $e\n$st");
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to import PDF pages: $e")),
       );
     }
   }
 
   Future<void> _loadNotesForTopic({bool selectNewest = false}) async {
     final topicId = widget.topicId;
+
+    // Preserve the current note ID BEFORE clearing state
+    final previousNoteId = selectNewest ? null : _activeNote?.id;
+
     setState(() {
       _isLoading = true;
       _notes = [];
@@ -474,25 +418,37 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       return;
     }
 
-    final previousNoteId = selectNewest ? null : _activeNote?.id;
     final notes = await noteService.getNotesForTopic(topicId);
 
     if (!mounted || widget.topicId != topicId) return;
 
     Note? nextNote;
     if (notes.isNotEmpty) {
+      // Priority 1: Restore from dock state if available
       final desiredNoteId = notesDockState.selectedNoteId;
-      final restoredIndex =
-          desiredNoteId == null ? -1 : notes.indexWhere((n) => n.id == desiredNoteId);
-      if (restoredIndex >= 0 && !selectNewest) {
-        nextNote = notes[restoredIndex];
-      } else if (selectNewest) {
+      if (desiredNoteId != null && !selectNewest) {
+        final restoredIndex = notes.indexWhere((n) => n.id == desiredNoteId);
+        if (restoredIndex >= 0) {
+          nextNote = notes[restoredIndex];
+        }
+      }
+
+      // Priority 2: If no dock state, use previous note
+      if (nextNote == null && previousNoteId != null && !selectNewest) {
+        final prevIndex = notes.indexWhere((n) => n.id == previousNoteId);
+        if (prevIndex >= 0) {
+          nextNote = notes[prevIndex];
+        }
+      }
+
+      // Priority 3: Select newest if requested
+      if (nextNote == null && selectNewest) {
         nextNote = notes.last;
-      } else {
-        nextNote = notes.firstWhere(
-          (n) => n.id == previousNoteId,
-          orElse: () => notes.first,
-        );
+      }
+
+      // Priority 4: Fall back to first note
+      if (nextNote == null) {
+        nextNote = notes.first;
       }
     }
 
@@ -580,11 +536,67 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       context: context,
       position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
       items: const [
-        PopupMenuItem(value: "delete", child: Text("Delete note")),
+        PopupMenuItem(
+          value: "rename",
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 18),
+              SizedBox(width: 8),
+              Text("Rename"),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: "delete",
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18),
+              SizedBox(width: 8),
+              Text("Delete"),
+            ],
+          ),
+        ),
       ],
     );
-    if (selection == "delete") {
+    if (selection == "rename") {
+      await _renameNote(note);
+    } else if (selection == "delete") {
       await _deleteNote(note);
+    }
+  }
+
+  Future<void> _renameNote(Note note) async {
+    final controller = TextEditingController(text: note.title);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Rename Note"),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: "Note title",
+            hintText: "Enter note title",
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text("Rename"),
+          ),
+        ],
+      ),
+    );
+
+    if (newTitle != null && newTitle.trim().isNotEmpty) {
+      note.title = newTitle.trim();
+      await noteService.updateNote(note);
+      await _loadNotesForTopic();
     }
   }
 
@@ -607,8 +619,13 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
   }
 
   String _previewLine(Note note) {
+    // Use note title if available, otherwise use first line of content
+    if (note.title.isNotEmpty && note.title != 'Untitled Note') {
+      return note.title;
+    }
     final text = _notePreview(note);
-    return text.split('\n').first;
+    final firstLine = text.split('\n').first;
+    return firstLine.isEmpty ? 'Untitled Note' : firstLine;
   }
 
   String _previewParagraph(Note note) {
@@ -716,6 +733,29 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Title input field
+          TextField(
+            controller: TextEditingController(text: _activeNote!.title),
+            style: textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colors.onSurface,
+            ),
+            decoration: InputDecoration(
+              hintText: "Untitled Note",
+              hintStyle: textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colors.onSurfaceVariant.withOpacity(0.4),
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            ),
+            onChanged: (value) {
+              if (_activeNote != null) {
+                _activeNote!.title = value.isEmpty ? 'Untitled Note' : value;
+              }
+            },
+          ),
+          const Divider(height: 16),
           Row(
             children: [
               Container(
@@ -828,24 +868,6 @@ class _NoteEditorAreaState extends State<NoteEditorArea> {
             Expanded(
               child: Column(
                 children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    alignment: WrapAlignment.end,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _insertRichImage,
-                        icon: const Icon(Icons.image_outlined),
-                        label: const Text("Insert image"),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _insertRichPdf,
-                        icon: const Icon(Icons.picture_as_pdf_outlined),
-                        label: const Text("Attach PDF"),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
                   quill.QuillSimpleToolbar(
                     controller: _quillController!,
                     config: const quill.QuillSimpleToolbarConfig(
@@ -1453,8 +1475,23 @@ class _CanvasBoardState extends State<_CanvasBoard> {
       return;
     }
     if (_activeStroke == null || widget.textMode) return;
-    final norm = _normalize(event.localPosition, size);
+
+    // Check if canvas will expand
+    const edgeThreshold = 120.0;
+    final willExpandX = event.localPosition.dx > size.width - edgeThreshold;
+    final willExpandY = event.localPosition.dy > size.height - edgeThreshold;
+
+    // Expand canvas first if needed
     _maybeExpandCanvas(event.localPosition, size);
+
+    // If canvas expanded, skip adding this point to avoid the flick artifact
+    // The next pointer event will add points with the correct scale
+    if (willExpandX || willExpandY) {
+      return;
+    }
+
+    // Normalize and add point only if no expansion occurred
+    final norm = _normalize(event.localPosition, size);
     _activeStroke!.points.add(CanvasPoint(norm.dx, norm.dy, _pressure(event)));
     _repaintSignal.value += 1;
   }

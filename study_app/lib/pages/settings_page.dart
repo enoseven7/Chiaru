@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/export_service.dart';
 import '../services/settings_service.dart';
 import '../services/teach_service.dart';
+import '../services/local_llm_service.dart';
 import '../models/teach_settings.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -21,10 +22,18 @@ class _SettingsPageState extends State<SettingsPage> {
   final _aiEndpointCtrl = TextEditingController();
   String _aiProvider = 'openai';
 
+  // Local LLM state
+  bool _ollamaRunning = false;
+  List<String> _installedModels = [];
+  bool _checkingOllama = false;
+  String? _downloadingModel;
+  double? _downloadProgress;
+
   @override
   void initState() {
     super.initState();
     _loadTeachSettings();
+    _checkOllamaStatus();
   }
 
   @override
@@ -94,8 +103,17 @@ class _SettingsPageState extends State<SettingsPage> {
                         spacing: 8,
                         runSpacing: 8,
                         children: ThemePreset.values.map((preset) {
+                          String displayName = preset.name;
+                          // Capitalize first letter
+                          if (displayName.isNotEmpty) {
+                            displayName = displayName[0].toUpperCase() + displayName.substring(1);
+                          }
+                          // Special case for AMOLED
+                          if (preset == ThemePreset.amoled) {
+                            displayName = 'AMOLED';
+                          }
                           return ChoiceChip(
-                            label: Text(preset.name),
+                            label: Text(displayName),
                             selected: settings.preset == preset,
                             onSelected: (_) => _applyPreset(preset, settings),
                           );
@@ -305,49 +323,276 @@ class _SettingsPageState extends State<SettingsPage> {
     await teachService.saveSettings(current);
   }
 
+  Future<void> _checkOllamaStatus() async {
+    setState(() => _checkingOllama = true);
+    try {
+      final running = await localLLMService.isOllamaRunning();
+      final models = running ? await localLLMService.getInstalledModels() : <String>[];
+      if (!mounted) return;
+      setState(() {
+        _ollamaRunning = running;
+        _installedModels = models;
+        _checkingOllama = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _ollamaRunning = false;
+        _installedModels = [];
+        _checkingOllama = false;
+      });
+    }
+  }
+
+  Future<void> _downloadModel(String modelTag) async {
+    setState(() {
+      _downloadingModel = modelTag;
+      _downloadProgress = null;
+    });
+
+    try {
+      await for (final progress in localLLMService.downloadModel(modelTag)) {
+        if (!mounted) return;
+        setState(() {
+          _downloadProgress = progress.progress;
+        });
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _downloadingModel = null;
+        _downloadProgress = null;
+      });
+
+      await _checkOllamaStatus();
+      if (!mounted) return;
+      _showSnack(context, 'Model $modelTag downloaded successfully');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloadingModel = null;
+        _downloadProgress = null;
+      });
+      _showSnack(context, 'Download failed: $e');
+    }
+  }
+
+  Future<void> _deleteModel(String modelTag) async {
+    try {
+      await localLLMService.deleteModel(modelTag);
+      await _checkOllamaStatus();
+      if (!mounted) return;
+      _showSnack(context, 'Model deleted');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack(context, 'Delete failed: $e');
+    }
+  }
+
   Widget _aiConfigSection(TextTheme textTheme, ColorScheme colors) {
+    final useLocal = _teachSettings?.useLocalLLM ?? false;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        Text("AI provider", style: textTheme.titleMedium),
+        Text("AI Mode", style: textTheme.titleMedium),
         const SizedBox(height: 6),
-        DropdownButtonFormField<String>(
-          value: _aiProvider,
-          items: const [
-            DropdownMenuItem(value: 'openai', child: Text("OpenAI-compatible")),
-            DropdownMenuItem(value: 'anthropic', child: Text("Anthropic")),
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(value: false, label: Text("Cloud"), icon: Icon(Icons.cloud)),
+            ButtonSegment(value: true, label: Text("Local"), icon: Icon(Icons.computer)),
           ],
-          onChanged: (val) {
-            if (val == null) return;
-            setState(() => _aiProvider = val);
-            _saveTeachSettings();
+          selected: {useLocal},
+          onSelectionChanged: (Set<bool> selected) async {
+            final newValue = selected.first;
+            final updated = (_teachSettings ?? TeachSettings())..useLocalLLM = newValue;
+            setState(() => _teachSettings = updated);
+            await teachService.saveSettings(updated);
           },
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _aiKeyCtrl,
-          obscureText: true,
-          decoration: const InputDecoration(labelText: "API key"),
-          onChanged: (_) => _saveTeachSettings(),
+        const SizedBox(height: 16),
+
+        // Cloud AI settings
+        if (!useLocal) ...[
+          Text("Cloud provider", style: textTheme.titleMedium),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: _aiProvider,
+            items: const [
+              DropdownMenuItem(value: 'openai', child: Text("OpenAI-compatible")),
+              DropdownMenuItem(value: 'anthropic', child: Text("Anthropic")),
+            ],
+            onChanged: (val) {
+              if (val == null) return;
+              setState(() => _aiProvider = val);
+              _saveTeachSettings();
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _aiKeyCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: "API key"),
+            onChanged: (_) => _saveTeachSettings(),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _aiModelCtrl,
+            decoration: const InputDecoration(labelText: "Model"),
+            onChanged: (_) => _saveTeachSettings(),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _aiEndpointCtrl,
+            decoration: const InputDecoration(labelText: "Custom endpoint (optional)"),
+            onChanged: (_) => _saveTeachSettings(),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Cloud AI requires an API key and internet connection.",
+            style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        ],
+
+        // Local LLM settings
+        if (useLocal) ...[
+          _localLLMSection(textTheme, colors),
+        ],
+      ],
+    );
+  }
+
+  Widget _localLLMSection(TextTheme textTheme, ColorScheme colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Ollama Status", style: textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        _ollamaRunning ? Icons.check_circle : Icons.error,
+                        color: _ollamaRunning ? Colors.green : Colors.red,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _ollamaRunning ? "Running" : "Not running",
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: _ollamaRunning ? Colors.green : Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _checkingOllama ? null : _checkOllamaStatus,
+              tooltip: "Refresh status",
+            ),
+          ],
         ),
         const SizedBox(height: 8),
-        TextField(
-          controller: _aiModelCtrl,
-          decoration: const InputDecoration(labelText: "Model"),
-          onChanged: (_) => _saveTeachSettings(),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _aiEndpointCtrl,
-          decoration: const InputDecoration(labelText: "Custom endpoint (optional)"),
-          onChanged: (_) => _saveTeachSettings(),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          "These settings are used across AI features (Teach mode, future flashcard/quiz helpers).",
-          style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-        ),
+        if (!_ollamaRunning) ...[
+          Text(
+            "Ollama is not running. Install Ollama from ollama.com and start it to use local AI models.",
+            style: textTheme.bodySmall?.copyWith(color: colors.error),
+          ),
+        ] else ...[
+          Text("Available Models", style: textTheme.titleMedium),
+          const SizedBox(height: 8),
+          ...LocalLLMService.availableModels.map((model) {
+            final isInstalled = _installedModels.any((m) => m.startsWith(model.modelTag));
+            final isDownloading = _downloadingModel == model.modelTag;
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(model.name, style: textTheme.titleSmall),
+                              const SizedBox(height: 2),
+                              Text(
+                                model.description,
+                                style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "${model.sizeInMB}MB",
+                                style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        if (isDownloading)
+                          SizedBox(
+                            width: 80,
+                            child: Column(
+                              children: [
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                                if (_downloadProgress != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "${(_downloadProgress! * 100).toStringAsFixed(0)}%",
+                                    style: textTheme.bodySmall,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          )
+                        else if (isInstalled)
+                          Row(
+                            children: [
+                              const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                iconSize: 20,
+                                onPressed: () => _deleteModel(model.modelTag),
+                                tooltip: "Delete",
+                              ),
+                            ],
+                          )
+                        else
+                          ElevatedButton(
+                            onPressed: () => _downloadModel(model.modelTag),
+                            child: const Text("Download"),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+          Text(
+            "Local models run on your computer. Download models to use them offline without API costs.",
+            style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        ],
       ],
     );
   }

@@ -73,6 +73,45 @@ class NotificationService {
     await _plugin.cancel(taskId);
   }
 
+  /// Show an immediate notification for Pomodoro timer events
+  Future<void> showPomodoroNotification({
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized) return;
+
+    const androidDetails = AndroidNotificationDetails(
+      'pomodoro',
+      'Pomodoro Timer',
+      channelDescription: 'Notifications for Pomodoro timer sessions',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+    );
+
+    const darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const linuxDetails = LinuxNotificationDetails();
+
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: darwinDetails,
+      macOS: darwinDetails,
+      linux: linuxDetails,
+    );
+
+    await _plugin.show(
+      999, // Using a fixed ID for Pomodoro notifications
+      title,
+      body,
+      details,
+    );
+  }
+
   String _buildBody(Task task) {
     final dueLabel = task.dueAt != null ? _formatDue(task.dueAt!) : 'No due date';
     return 'Due $dueLabel • Priority: ${task.priority.name}';

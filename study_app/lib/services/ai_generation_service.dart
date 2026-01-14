@@ -13,6 +13,7 @@ import '../models/teach_settings.dart';
 import '../services/teach_service.dart';
 import '../services/flashcard_service.dart';
 import '../services/quiz_service.dart';
+import '../services/local_llm_service.dart';
 import '../models/quiz_question.dart';
 
 class AiGenerationService {
@@ -28,6 +29,20 @@ class AiGenerationService {
     required String prompt,
     int? maxTokens,
   }) async {
+    // Use local LLM if enabled
+    if (settings.useLocalLLM) {
+      try {
+        final response = await localLLMService.generate(
+          prompt: prompt,
+          maxTokens: maxTokens ?? 512,
+        );
+        return response;
+      } catch (e) {
+        throw Exception("Local LLM error: $e");
+      }
+    }
+
+    // Otherwise use cloud provider
     final provider = settings.cloudProvider.isEmpty ? 'openai' : settings.cloudProvider;
     final apiKey = settings.apiKey?.trim() ?? '';
     if (apiKey.isEmpty) {

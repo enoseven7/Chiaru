@@ -6,6 +6,7 @@ import 'package:http/io_client.dart';
 
 import '../main.dart';
 import '../models/teach_settings.dart';
+import '../services/local_llm_service.dart';
 
 class TeachService {
   http.Client _buildClient({required bool allowBadCertificates}) {
@@ -35,23 +36,55 @@ class TeachService {
     required String topic,
     required String explanation,
     String audience = 'peer',
+    bool useLocalLLM = false,
   }) async {
     final prompt = """
-You are a concise tutor. Critique the explanation below for clarity, accuracy, and completeness. Topic: $topic. Audience: $audience. Ignore informal grammar or casual phrasing unless the user explicitly asks for a grammar-focused review.
+You are an expert educational tutor providing constructive feedback. Analyze the student's explanation below and provide detailed, helpful critique.
 
-Explanation:
+**Topic:** $topic
+**Target Audience:** $audience
+**Student's Explanation:**
 $explanation
 
-Respond with:
-Clarity: x/10
-Accuracy: x/10
-Completeness: x/10
-Improved Explanation: rewrite it more clearly for the stated audience.
+Please provide your critique in the following format (use markdown formatting):
 
-Feedback: bullet points, brief (avoid focusing on casual grammar unless requested).
-Follow-ups: 2-3 suggested questions.
+**Clarity:** x/10
+Explain how clear and understandable the explanation is.
+
+**Accuracy:** x/10
+Assess factual correctness and technical precision.
+
+**Completeness:** x/10
+Evaluate coverage of key concepts and necessary details.
+
+**Improved Explanation:**
+Rewrite the explanation in a clearer, more engaging way appropriate for the target audience. Use examples or analogies where helpful.
+
+**Key Feedback:**
+- Provide 3-5 specific, actionable bullet points for improvement
+- Focus on content, structure, and pedagogical effectiveness
+- Be constructive and encouraging
+
+**Suggested Follow-up Questions:**
+List 2-3 thought-provoking questions to deepen understanding of the topic.
+
+Keep your response focused and practical. Use **bold** for headings and key terms, and use bullet points for lists.
 """;
 
+    // Use local LLM if enabled
+    if (useLocalLLM) {
+      try {
+        final response = await localLLMService.generate(
+          prompt: prompt,
+          maxTokens: 1024,
+        );
+        return response.trim().isEmpty ? "No response from local model." : response.trim();
+      } catch (e) {
+        return "Local LLM error: $e";
+      }
+    }
+
+    // Otherwise use cloud provider
     switch (provider) {
       case 'openai':
         final base = (endpointOverride != null && endpointOverride.isNotEmpty)

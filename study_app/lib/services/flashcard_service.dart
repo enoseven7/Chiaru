@@ -472,80 +472,89 @@ class FlashcardService {
         createdDeckIds.add(newDeckId);
 
         for (final row in entry.value) {
-          final fields = (row['flds'] as String).split('\u001F');
-          final mid = row['mid'] as int?;
-          final model = mid != null ? modelMap[mid] : null;
-          final template = model?.templates.isNotEmpty == true ? model!.templates.first : null;
+          try {
+            final fields = (row['flds'] as String).split('\u001F');
+            final mid = row['mid'] as int?;
+            final model = mid != null ? modelMap[mid] : null;
+            final template = model?.templates.isNotEmpty == true ? model!.templates.first : null;
 
-          String frontRaw;
-          String backRaw;
-          if (template != null) {
-            frontRaw = _renderTemplate(template.qfmt, fields, model!.fieldNames);
-            final renderedFront = frontRaw;
-            backRaw = _renderTemplate(
-              template.afmt.replaceAll("{{FrontSide}}", renderedFront),
-              fields,
-              model.fieldNames,
+            String frontRaw;
+            String backRaw;
+            if (template != null) {
+              try {
+                frontRaw = _renderTemplate(template.qfmt, fields, model!.fieldNames);
+                final renderedFront = frontRaw;
+                backRaw = _renderTemplate(
+                  template.afmt.replaceAll("{{FrontSide}}", renderedFront),
+                  fields,
+                  model.fieldNames,
+                );
+              } catch (e) {
+                // If template rendering fails, fall back to basic mode
+                frontRaw = fields.isNotEmpty ? fields[0] : '';
+                backRaw = fields.length > 1 ? fields.sublist(1).join('\n\n') : '';
+              }
+            } else {
+              // Fallback: basic front/back from fields
+              frontRaw = fields.isNotEmpty ? fields[0] : '';
+              backRaw = fields.length > 1 ? fields.sublist(1).join('\n\n') : '';
+            }
+
+            final cleanedFront = _cleanField(frontRaw);
+            final cleanedBack = _cleanField(backRaw);
+
+            final type = row['type'] as int; // 0=new,1=learning,2=review,3=relearn
+            final ivl = row['ivl'] as int? ?? 0;
+            final factor = row['factor'] as int? ?? 2500;
+            final reps = row['reps'] as int? ?? 0;
+            final lapses = row['lapses'] as int? ?? 0;
+            final dueRaw = row['due'] as int? ?? 0;
+
+            int dueAt = 0;
+            int intervalDays = 0;
+            int lastReviewed = 0;
+            double ease = (factor / 1000).clamp(1.3, 3.0);
+
+            if (type >= 2 && ivl > 0) {
+              intervalDays = ivl;
+              final dueDays = crtDays + dueRaw;
+              dueAt = DateTime.fromMillisecondsSinceEpoch(dueDays * 86400000).millisecondsSinceEpoch;
+              lastReviewed = DateTime.now().millisecondsSinceEpoch;
+            }
+
+            final mediaFront = await _extractMedia(frontRaw, mediaMap, workDir);
+            final mediaBack = await _extractMedia(backRaw, mediaMap, workDir);
+
+            // Fallback if text is empty but media exists.
+            final hasFrontMedia = mediaFront.imagePath != null || mediaFront.audioPaths.isNotEmpty;
+            final hasBackMedia = mediaBack.imagePath != null || mediaBack.audioPaths.isNotEmpty;
+            final finalFront = cleanedFront.isNotEmpty
+                ? cleanedFront
+                : (hasFrontMedia ? 'Media card' : frontRaw.trim());
+            final finalBack = cleanedBack.isNotEmpty
+                ? cleanedBack
+                : (hasBackMedia ? 'Media card' : backRaw.trim());
+
+            await createFlashcard(
+              newDeckId,
+              finalFront,
+              finalBack,
+              imagePath: mediaFront.imagePath ?? mediaBack.imagePath,
+              audioPath: _serializeAudioBundle(mediaFront, mediaBack),
+              imageOnFront: mediaFront.imagePath != null,
+              audioOnFront: mediaFront.audioPaths.isNotEmpty,
+              lastReviewed: lastReviewed,
+              dueAt: dueAt,
+              intervalDays: intervalDays,
+              easeFactor: ease,
+              repetitions: reps,
+              lapses: lapses,
             );
-          } else {
-            // Fallback: basic two-sided
-            final frontParts = <String>[];
-            if (fields.isNotEmpty) frontParts.add(fields[0]);
-            if (fields.length > 1) frontParts.add(fields[1]);
-            frontRaw = frontParts.join('\n\n');
-            backRaw = fields.length > 2 ? fields.sublist(2).join('\n\n') : (fields.length > 1 ? fields[1] : '');
+          } catch (e) {
+            // Skip this card if there's an error, continue with others
+            // Silently continue to next card
+            continue;
           }
-
-          final cleanedFront = _cleanField(frontRaw);
-          final cleanedBack = _cleanField(backRaw);
-
-          final type = row['type'] as int; // 0=new,1=learning,2=review,3=relearn
-          final ivl = row['ivl'] as int? ?? 0;
-          final factor = row['factor'] as int? ?? 2500;
-          final reps = row['reps'] as int? ?? 0;
-          final lapses = row['lapses'] as int? ?? 0;
-          final dueRaw = row['due'] as int? ?? 0;
-
-          int dueAt = 0;
-          int intervalDays = 0;
-          int lastReviewed = 0;
-          double ease = (factor / 1000).clamp(1.3, 3.0);
-
-          if (type >= 2 && ivl > 0) {
-            intervalDays = ivl;
-            final dueDays = crtDays + dueRaw;
-            dueAt = DateTime.fromMillisecondsSinceEpoch(dueDays * 86400000).millisecondsSinceEpoch;
-            lastReviewed = DateTime.now().millisecondsSinceEpoch;
-          }
-
-          final mediaFront = await _extractMedia(frontRaw, mediaMap, workDir);
-          final mediaBack = await _extractMedia(backRaw, mediaMap, workDir);
-
-          // Fallback if text is empty but media exists.
-          final hasFrontMedia = mediaFront.imagePath != null || mediaFront.audioPaths.isNotEmpty;
-          final hasBackMedia = mediaBack.imagePath != null || mediaBack.audioPaths.isNotEmpty;
-          final finalFront = cleanedFront.isNotEmpty
-              ? cleanedFront
-              : (hasFrontMedia ? 'Media card' : frontRaw.trim());
-          final finalBack = cleanedBack.isNotEmpty
-              ? cleanedBack
-              : (hasBackMedia ? 'Media card' : backRaw.trim());
-
-          await createFlashcard(
-            newDeckId,
-            finalFront,
-            finalBack,
-            imagePath: mediaFront.imagePath ?? mediaBack.imagePath,
-            audioPath: _serializeAudioBundle(mediaFront, mediaBack),
-            imageOnFront: mediaFront.imagePath != null,
-            audioOnFront: mediaFront.audioPaths.isNotEmpty,
-            lastReviewed: lastReviewed,
-            dueAt: dueAt,
-            intervalDays: intervalDays,
-            easeFactor: ease,
-            repetitions: reps,
-            lapses: lapses,
-          );
         }
       }
     } finally {
@@ -633,22 +642,67 @@ class FlashcardService {
 
   String _cleanField(String text) {
     var t = text;
-    t = t.replaceAll(RegExp(r'<br\\s*/?>', caseSensitive: false), '\n');
+    // Replace various HTML break and paragraph tags with newlines
+    t = t.replaceAll(RegExp(r'<br\s*/?>',  caseSensitive: false), '\n');
+    t = t.replaceAll(RegExp(r'</p>', caseSensitive: false), '\n\n');
     t = t.replaceAll(RegExp(r'</div>', caseSensitive: false), '\n');
+    t = t.replaceAll(RegExp(r'</li>', caseSensitive: false), '\n');
+    // Remove sound and media tags
     t = t.replaceAll(RegExp(r'\[sound:[^\]]+\]'), '');
-    t = t.replaceAll(RegExp(r'<audio[^>]*src="([^"]+)"[^>]*>[^<]*</audio>', caseSensitive: false), '');
+    t = t.replaceAll(RegExp(r'<audio[^>]*>.*?</audio>', caseSensitive: false, dotAll: true), '');
+    t = t.replaceAll(RegExp(r'<img[^>]*>', caseSensitive: false), '');
+    // Remove all remaining HTML tags
     t = t.replaceAll(RegExp(r'<[^>]+>'), '');
+    // Decode HTML entities
+    t = t.replaceAll('&nbsp;', ' ');
+    t = t.replaceAll('&lt;', '<');
+    t = t.replaceAll('&gt;', '>');
+    t = t.replaceAll('&amp;', '&');
+    t = t.replaceAll('&quot;', '"');
+    // Clean up excessive whitespace
+    t = t.replaceAll(RegExp(r'\n\s*\n\s*\n+'), '\n\n');
     return t.trim();
   }
 
   String _renderTemplate(String template, List<String> fieldValues, List<String> fieldNames) {
     var rendered = template;
+
+    // Replace field values
     for (var i = 0; i < fieldNames.length && i < fieldValues.length; i++) {
       final name = fieldNames[i];
-      rendered = rendered.replaceAll('{{$name}}', fieldValues[i]);
+      final value = fieldValues[i];
+      // Handle both {{FieldName}} and {{fieldname}} (case insensitive)
+      rendered = rendered.replaceAllMapped(
+        RegExp('\\{\\{$name\\}\\}', caseSensitive: false),
+        (match) => value,
+      );
     }
-    // Strip other tags like {{FrontSide}}
+
+    // Handle cloze deletions - convert {{c1::text}} to [text]
+    rendered = rendered.replaceAllMapped(
+      RegExp(r'\{\{c\d+::([^}]+)\}\}', caseSensitive: false),
+      (match) => '[${match.group(1)}]',
+    );
+
+    // Handle cloze hints - {{c1::text::hint}} -> [text]
+    rendered = rendered.replaceAllMapped(
+      RegExp(r'\{\{c\d+::([^:}]+)::[^}]+\}\}', caseSensitive: false),
+      (match) => '[${match.group(1)}]',
+    );
+
+    // Handle type:Field syntax - just show the field name
+    rendered = rendered.replaceAllMapped(
+      RegExp(r'\{\{type:([^}]+)\}\}', caseSensitive: false),
+      (match) => '[Type: ${match.group(1)}]',
+    );
+
+    // Handle conditional fields {{#FieldName}} ... {{/FieldName}}
+    // For simplicity, just remove the conditionals and keep the content
+    rendered = rendered.replaceAll(RegExp(r'\{\{[#/][^}]+\}\}'), '');
+
+    // Strip any remaining Anki template tags
     rendered = rendered.replaceAll(RegExp(r'\{\{[^}]+\}\}'), '');
+
     return rendered;
   }
 }

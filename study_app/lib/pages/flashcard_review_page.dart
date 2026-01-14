@@ -62,49 +62,66 @@ class _FlashcardReviewPageState extends State<FlashcardReviewPage> {
 
   void _rebuildQueue({int? startIndex}) {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    // Pull learning cards due now (or future if none are due) and all due review cards.
+
+    // Categorize cards
     final learningDueNow =
         cards.where((c) => c.intervalDays == 0 && c.dueAt != 0 && c.dueAt <= nowMs).toList();
+    final learningSoon =
+        cards.where((c) => c.intervalDays == 0 && c.dueAt != 0 && c.dueAt > nowMs).toList()
+          ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
     final reviewDue = cards.where((c) => c.dueAt <= nowMs && c.intervalDays > 0).toList();
     final reviewLimited = reviewDue.take(_maxReviewPerSession).toList();
     final newUnseen = cards.where((c) => c.dueAt == 0 && !_seenNewIds.contains(c.id)).toList();
     final quota = (_maxNewPerSession - _introducedToday).clamp(0, _maxNewPerSession);
     final newCards = quota > 0 ? newUnseen.take(quota).toList() : <Flashcard>[];
 
-    // Counts reflect total cards in each phase (not only currently due).
+    // Counts reflect total cards in each phase
     _dueLearning = cards.where((c) => c.intervalDays == 0 && c.dueAt != 0).length;
     _dueReview = cards.where((c) => c.intervalDays > 0).length;
     _dueNew = min(quota, cards.where((c) => c.dueAt == 0).length);
 
     if (_onlyDue) {
-      // Mix from all piles; introduce at most one new card per rebuild.
+      // Anki-like behavior: mix learning, review, and new cards
       final combined = <Flashcard>[];
+
+      // Add all learning cards that are due now
       combined.addAll(learningDueNow);
+
+      // Add review cards
       combined.addAll(reviewLimited);
-      if (newCards.isNotEmpty) {
-        combined.add(newCards.first);
-      }
-      if (combined.isEmpty) {
-        final nextLearning = cards
-            .where((c) => c.intervalDays == 0 && c.dueAt != 0)
-            .toList()
-          ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
-        if (nextLearning.isNotEmpty) {
-          final soon = nextLearning.first;
-          final delta = soon.dueAt - nowMs;
-          if (delta <= 15000) {
-            combined.add(soon);
-          }
+
+      // Add new cards progressively (interleaved with learning/review)
+      // This ensures new cards are introduced gradually throughout the session
+      final newCardsToAdd = min(newCards.length, max(1, (combined.length / 4).ceil()));
+      combined.addAll(newCards.take(newCardsToAdd));
+
+      // If queue is empty but we have learning cards coming up soon, show them
+      if (combined.isEmpty && learningSoon.isNotEmpty) {
+        final soon = learningSoon.first;
+        final delta = soon.dueAt - nowMs;
+        // Show cards due within next 60 seconds
+        if (delta <= 60000) {
+          combined.add(soon);
         }
       }
-      combined.sort((a, b) => a.dueAt.compareTo(b.dueAt));
+
+      // Sort by priority: learning first (by due time), then reviews, then new
+      combined.sort((a, b) {
+        // Both are learning
+        if (a.intervalDays == 0 && b.intervalDays == 0) {
+          return a.dueAt.compareTo(b.dueAt);
+        }
+        // a is learning, b is not - a comes first
+        if (a.intervalDays == 0) return -1;
+        if (b.intervalDays == 0) return 1;
+        // Both are review or new - sort by due date
+        return a.dueAt.compareTo(b.dueAt);
+      });
+
       queue = combined;
     } else {
       queue = List<Flashcard>.from(cards)..sort((a, b) => a.dueAt.compareTo(b.dueAt));
     }
-
-    // Order by due time so short learning intervals surface quickly.
-    queue.sort((a, b) => a.dueAt.compareTo(b.dueAt));
 
     if (queue.isEmpty) {
       index = 0;
